@@ -18,7 +18,7 @@ lidar_topicnames = ["/lidar_pose", "/lms_pose", "/vlp_pose"]
 fusion_topicname = ["/vehicle_pose"]
 
 vhc2gps_x = 0.642
-yaw_threshold = np.radians(5)
+yaw_threshold = np.radians(2)
 
 '''
 BAG DATA
@@ -168,10 +168,7 @@ def syncLidarTrajectory(gnss_traj, lidar_traj):
     return sync_lidar_traj
 
 
-def computeDist(gnss_traj, lidar_traj):
-
-    # Move gnss to vehicle frame (and remove first / last record due to wrong yaw)
-    gnss_vhc_traj = moveGnssToVhc(gnss_traj)
+def computeDist(gnss_vhc_traj, lidar_traj):
 
     # Synchronize lidar trajectory to keep only record on the gnss trajectory
     lidar_sync_traj = syncLidarTrajectory(gnss_vhc_traj, lidar_traj)
@@ -194,14 +191,14 @@ def computeDist(gnss_traj, lidar_traj):
         point_on_traj_y = np.hstack((point_on_traj_y, np.array([point_on_traj.y])))
 
 #    # Display
-    plt.plot(xnew, ynew)
-    plt.scatter(lidar_sync_traj.x, lidar_sync_traj.y, c='r')
-    plt.scatter(gnss_vhc_traj.x, gnss_vhc_traj.y, c='m')
-    for i in xrange(0, lidar_sync_traj.size()):
-        plt.plot(np.array([point_on_traj_x[i], lidar_sync_traj.x[i]]), np.array([point_on_traj_y[i], lidar_sync_traj.y[i]]), 'k-')
-    plt.axis('equal')
-    plt.show()
-    return gnss_vhc_traj, lidar_sync_traj, distances
+#    plt.plot(xnew, ynew)
+#    plt.scatter(lidar_sync_traj.x, lidar_sync_traj.y, c='r')
+#    plt.scatter(gnss_vhc_traj.x, gnss_vhc_traj.y, c='m')
+#    for i in xrange(0, lidar_sync_traj.size()):
+#        plt.plot(np.array([point_on_traj_x[i], lidar_sync_traj.x[i]]), np.array([point_on_traj_y[i], lidar_sync_traj.y[i]]), 'k-')
+#    plt.axis('equal')
+#    plt.show()
+    return lidar_sync_traj, distances
 
 def loadBagData(bag):
 
@@ -261,7 +258,7 @@ def plot_distances(bags_bundle):
     colors = []
     for bag, bag_bundle in bags_bundle.iteritems():
         for lidar in lidar_topicnames:
-            if bag_bundle.statistics.lidar_distances[lidar].size > 0:
+            if bag_bundle.bag_data.lidar_traj[lidar].size() > 0:
                 p = plt.plot(bag_bundle.statistics.lidar_interp_trajectories[lidar].time, bag_bundle.statistics.lidar_distances[lidar])
                 bag_name = bag.split("/")[-1]
                 colors.append(p[0].get_color())
@@ -284,17 +281,18 @@ def plot_trajectories(bags_bundle):
     for bag, bag_bundle in bags_bundle.iteritems():
         bag_name = bag.split("/")[-1]
         for lidar in lidar_topicnames:
-            if bag_bundle.statistics.lidar_distances[lidar].size > 0:
-                p = plt.plot(bag_bundle.statistics.lidar_interp_trajectories[lidar].x, bag_bundle.statistics.lidar_interp_trajectories[lidar].y)
+            if bag_bundle.bag_data.lidar_traj[lidar].size() > 0:
+                p = plt.plot(bag_bundle.bag_data.lidar_traj[lidar].x, bag_bundle.bag_data.lidar_traj[lidar].y)
                 colors.append(p[0].get_color())
                 patches.append( mpatches.Patch(color=p[0].get_color(), label=lidar + " on " + bag_name))
-        p = plt.plot(bag_bundle.bag_data.gnss2vhc_traj.x, bag_bundle.bag_data.gnss2vhc_traj.y)
+        p = plt.plot(bag_bundle.statistics.gnss2vhc_traj.x, bag_bundle.statistics.gnss2vhc_traj.y)
         patches.append( mpatches.Patch(color=p[0].get_color(), label=gnss_topicname[0] + " on " + bag_name))
 
 
     plt.xlabel("X (m)")
     plt.ylabel("Y (m)")
     plt.grid(True)
+    plt.axis('equal')
     plt.legend(handles=patches)
     plt.title("GNSS and lidars trajectories")
     plt.show()
@@ -313,9 +311,14 @@ if __name__ == "__main__":
             bdata = loadBagData(bag)
             stats = Statistics()
 
+            # Move gnss to vehicle frame (and remove first / last record due to wrong yaw)
+            gnss_vhc_traj = moveGnssToVhc(bdata.gnss_traj)
+            # Save new gnss trajectory
+            stats.gnss2vhc_traj = gnss_vhc_traj
+
             for lidar_topic in lidar_topicnames:
                 if bdata.lidar_traj[lidar_topic].size() > 0:
-                    gnss_vhc_traj, lidar_sync_traj, distances = computeDist(bdata.gnss_traj, bdata.lidar_traj[lidar_topic])
+                    lidar_sync_traj, distances = computeDist(gnss_vhc_traj, bdata.lidar_traj[lidar_topic])
                     stats.lidar_distances[lidar_topic] = distances
                     stats.lidar_interp_trajectories[lidar_topic] = lidar_sync_traj
 
