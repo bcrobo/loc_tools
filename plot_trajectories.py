@@ -12,6 +12,7 @@ import shapely.geometry as geom
 
 from rosbag import Bag
 from scipy import interpolate
+from scipy.stats import chi2
 
 gnss_topicname = ["/gps_position"]
 lidar_topicnames = ["/lidar_pose", "/lms_pose", "/vlp_pose"]
@@ -246,11 +247,68 @@ def loadBagData(bag):
 
     return bdata
 
+def computeEllipse(cov,mass_level=0.99):
+        eig_vec,eig_val,u = np.linalg.svd(cov)
+        #make sure 0th eigenvector has positive x-coordinate
+        if eig_vec[0][0] < 0:
+            eig_vec[0] *= -1
+        semi_maj = np.sqrt(eig_val[0])
+        semi_min = np.sqrt(eig_val[1])
+
+        distances = np.linspace(0,20,20001)
+        chi2_cdf = chi2.cdf(distances,df=2)
+	multiplier = np.sqrt(distances[np.where(np.abs(chi2_cdf-mass_level)==np.abs(chi2_cdf-mass_level).min())[0][0]])
+        semi_maj *= multiplier
+        semi_min *= multiplier
+
+	phi = np.arccos(np.dot(eig_vec[0],np.array([1,0])))
+        if eig_vec[0][1] < 0 and phi > 0:
+            phi *= -1
+
+       	return semi_maj, semi_min, phi
+
+def plotEllipse(semimaj=1,semimin=1,phi=0,xc=0,yc=0,theta_num=1e3,fill=False,data_out=False,ax=None,a_color='b'): 
+        #generate data for ellipse
+        theta = np.linspace(0,2*np.pi,theta_num)
+        r = 1 / np.sqrt((np.cos(theta))**2 + (np.sin(theta))**2)
+        x = r*np.cos(theta)
+        y = r*np.sin(theta)
+        data = np.array([x,y])
+        S = np.array([[semimaj,0],[0,semimin]])
+        R = np.array([[np.cos(phi),-np.sin(phi)],[np.sin(phi),np.cos(phi)]])
+        T = np.dot(R,S)
+        data = np.dot(T,data)
+        data[0] += xc
+        data[1] += yc
+
+         # Output data
+        if data_out == True:
+                return data
+
+        # Plot
+	return_fig = False
+        if ax is None:
+                return_fig = True
+                fig,ax = plt.subplots()
+
+        ax.plot(data[0],data[1],color=a_color,linestyle='-')
+
+        if fill == True:
+                ax.fill(data[0],data[1],**fill_kwargs)
+
+        if return_fig == True:
+                return fig
+
+
+def plotTrajectoryEllipses(traj, mass_level=0.99, theta_num=1e3, fill=False, data_out=False,ax=None, a_color='b'):
+    for i in xrange(0,traj.size()):
+        semi_maj, semi_min, phi = computeEllipse(traj.cov[i,:,:], mass_level) 
+        plotEllipse(semi_maj, semi_min, phi, traj.x[i], traj.y[i], theta_num,fill,data_out,ax,a_color)
 
 '''
 PLOTTING FUNCTIONS
 '''
-def plot_distances(bags_bundle):
+def plotDistances(bags_bundle):
     plt.figure(1)
     plt.subplot(111)
 
@@ -272,7 +330,7 @@ def plot_distances(bags_bundle):
     plt.title("Distance between lidars and GNSS")
     plt.show()
 
-def plot_trajectories(bags_bundle):
+def plotTrajectories(bags_bundle, with_ellipses=False):
     plt.figure(1)
     plt.subplot(111)
 
@@ -285,7 +343,13 @@ def plot_trajectories(bags_bundle):
                 p = plt.plot(bag_bundle.bag_data.lidar_traj[lidar].x, bag_bundle.bag_data.lidar_traj[lidar].y)
                 colors.append(p[0].get_color())
                 patches.append( mpatches.Patch(color=p[0].get_color(), label=lidar + " on " + bag_name))
+
+                if with_ellipses:
+                    plotTrajectoryEllipses(bag_bundle.bag_data.lidar_traj[lidar], 0.99, 1e3,False,False,plt,p[0].get_color())
+
         p = plt.plot(bag_bundle.statistics.gnss2vhc_traj.x, bag_bundle.statistics.gnss2vhc_traj.y)
+        if with_ellipses:
+            plotTrajectoryEllipses(bag_bundle.statistics.gnss2vhc_traj, 0.99, 1e3,False,False,plt,p[0].get_color())
         patches.append( mpatches.Patch(color=p[0].get_color(), label=gnss_topicname[0] + " on " + bag_name))
 
 
@@ -294,7 +358,7 @@ def plot_trajectories(bags_bundle):
     plt.grid(True)
     plt.axis('equal')
     plt.legend(handles=patches)
-    plt.title("GNSS and lidars trajectories")
+    plt.title("GNSS and Lidars trajectories")
     plt.show()
 
 if __name__ == "__main__":
@@ -327,6 +391,6 @@ if __name__ == "__main__":
             bags_bundle[b].statistics = stats 
 
     if args.distance:
-        plot_distances(bags_bundle)
+        plotDistances(bags_bundle)
     if args.trajectory:
-        plot_trajectories(bags_bundle)
+        plotTrajectories(bags_bundle)
