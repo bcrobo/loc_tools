@@ -17,6 +17,7 @@ from scipy.stats import chi2
 gnss_topicname = ["/gps_position"]
 lidar_topicnames = ["/lidar_pose", "/lms_pose", "/vlp_pose"]
 fusion_topicname = ["/vehicle_pose"]
+fusion_details_topicname = ["/localization/fusion_details"]
 
 vhc2gps_x = 0.642
 yaw_threshold = np.radians(2)
@@ -41,12 +42,15 @@ class BagData:
         self.fusion_traj = Trajectory2D()
         self.lidar_traj = {l:Trajectory2D() for l in lidar_topicnames}
 
-
 class Statistics:
     def __init__(self):
         self.lidar_distances = {l:np.empty([0]) for l in lidar_topicnames}
         self.lidar_interp_trajectories = {l:Trajectory2D() for l in lidar_topicnames}
         self.gnss2vhc_traj = Trajectory2D()
+        self.mahalanobis = {l:np.empty([0]) for l in lidar_topicnames + gnss_topicname}
+        self.mahalanobis_time = {l:np.empty([0]) for l in lidar_topicnames + gnss_topicname}
+        self.mir = {l:np.empty([0]) for l in lidar_topicnames}
+        self.mir_time = {l:np.empty([0]) for l in lidar_topicnames}
 
 class BagBundle:
     def __init__(self):
@@ -191,7 +195,7 @@ def computeDist(gnss_vhc_traj, lidar_traj):
         point_on_traj_x = np.hstack((point_on_traj_x, np.array([point_on_traj.x])))
         point_on_traj_y = np.hstack((point_on_traj_y, np.array([point_on_traj.y])))
 
-#    # Display
+#    # Display ortho distances
 #    plt.plot(xnew, ynew)
 #    plt.scatter(lidar_sync_traj.x, lidar_sync_traj.y, c='r')
 #    plt.scatter(gnss_vhc_traj.x, gnss_vhc_traj.y, c='m')
@@ -201,9 +205,21 @@ def computeDist(gnss_vhc_traj, lidar_traj):
 #    plt.show()
     return lidar_sync_traj, distances
 
+def sensorNameToTopic(sensor_name):
+    r = [x for x in lidar_topicnames if sensor_name in x]
+    if len(r) > 0:
+        return r[0]
+
+    r = [x for x in gnss_topicname if sensor_name in x]
+    if len(r) > 0:
+        return r[0]
+
+    return ""
+
 def loadBagData(bag):
 
     bdata = BagData()
+    stats = Statistics()
 
     # Load gnss data
     for topic, msg, t in bag.read_messages(topics=gnss_topicname):
@@ -232,6 +248,7 @@ def loadBagData(bag):
         yy = msg.pose.covariance[7]
         cov = np.array([[xx, xy],[yx, yy]])
         bdata.lidar_traj[topic].cov = np.vstack((bdata.lidar_traj[topic].cov, cov.reshape(1,2,2)))
+        stats.mir[topic] = np.hstack((stats.mir[topic], np.array([msg.detail.matched_impact_ratio])))
 
     # Load fusion data
     for topic, msg, t in bag.read_messages(topics=fusion_topicname):
@@ -245,59 +262,66 @@ def loadBagData(bag):
         cov = np.array([[xx, xy],[yx, yy]])
         bdata.fusion_traj.cov = np.vstack((bdata.fusion_traj.cov, cov.reshape(1,2,2)))
 
-    return bdata
+    # Load fusion details
+    for topic, msg, t in bag.read_messages(topics=fusion_details_topicname):
+        sensor_topic = sensorNameToTopic(msg.sensor_name)
+        if sensor_topic:
+            stats.mahalanobis[sensor_topic] = np.hstack((stats.mahalanobis[sensor_topic], np.array([msg.mahalanobis_dist])))
+            stats.mahalanobis_time[sensor_topic] = np.hstack((stats.mahalanobis_time[sensor_topic], np.array([msg.header.stamp.to_sec()])))
+
+    return bdata, stats
 
 def computeEllipse(cov,mass_level=0.99):
-        eig_vec,eig_val,u = np.linalg.svd(cov)
-        #make sure 0th eigenvector has positive x-coordinate
-        if eig_vec[0][0] < 0:
-            eig_vec[0] *= -1
-        semi_maj = np.sqrt(eig_val[0])
-        semi_min = np.sqrt(eig_val[1])
+    eig_vec,eig_val,u = np.linalg.svd(cov)
+    #make sure 0th eigenvector has positive x-coordinate
+    if eig_vec[0][0] < 0:
+        eig_vec[0] *= -1
+    semi_maj = np.sqrt(eig_val[0])
+    semi_min = np.sqrt(eig_val[1])
 
-        distances = np.linspace(0,20,20001)
-        chi2_cdf = chi2.cdf(distances,df=2)
-	multiplier = np.sqrt(distances[np.where(np.abs(chi2_cdf-mass_level)==np.abs(chi2_cdf-mass_level).min())[0][0]])
-        semi_maj *= multiplier
-        semi_min *= multiplier
+    distances = np.linspace(0,20,20001)
+    chi2_cdf = chi2.cdf(distances,df=2)
+    multiplier = np.sqrt(distances[np.where(np.abs(chi2_cdf-mass_level)==np.abs(chi2_cdf-mass_level).min())[0][0]])
+    semi_maj *= multiplier
+    semi_min *= multiplier
 
-	phi = np.arccos(np.dot(eig_vec[0],np.array([1,0])))
-        if eig_vec[0][1] < 0 and phi > 0:
-            phi *= -1
+    phi = np.arccos(np.dot(eig_vec[0],np.array([1,0])))
+    if eig_vec[0][1] < 0 and phi > 0:
+        phi *= -1
 
-       	return semi_maj, semi_min, phi
+   	return semi_maj, semi_min, phi
 
 def plotEllipse(semimaj=1,semimin=1,phi=0,xc=0,yc=0,theta_num=1e3,fill=False,data_out=False,ax=None,a_color='b'): 
-        #generate data for ellipse
-        theta = np.linspace(0,2*np.pi,theta_num)
-        r = 1 / np.sqrt((np.cos(theta))**2 + (np.sin(theta))**2)
-        x = r*np.cos(theta)
-        y = r*np.sin(theta)
-        data = np.array([x,y])
-        S = np.array([[semimaj,0],[0,semimin]])
-        R = np.array([[np.cos(phi),-np.sin(phi)],[np.sin(phi),np.cos(phi)]])
-        T = np.dot(R,S)
-        data = np.dot(T,data)
-        data[0] += xc
-        data[1] += yc
+    #generate data for ellipse
+    theta = np.linspace(0,2*np.pi,theta_num)
+    r = 1 / np.sqrt((np.cos(theta))**2 + (np.sin(theta))**2)
+    x = r*np.cos(theta)
+    y = r*np.sin(theta)
+    data = np.array([x,y])
+    S = np.array([[semimaj,0],[0,semimin]])
+    R = np.array([[np.cos(phi),-np.sin(phi)],[np.sin(phi),np.cos(phi)]])
+    T = np.dot(R,S)
+    data = np.dot(T,data)
+    data[0] += xc
+    data[1] += yc
 
-         # Output data
-        if data_out == True:
-                return data
+     # Output data
+    if data_out == True:
+            return data
 
-        # Plot
-	return_fig = False
-        if ax is None:
-                return_fig = True
-                fig,ax = plt.subplots()
+    # Plot
+    return_fig = False
+    if ax is None:
+            return_fig = True
+            fig,ax = plt.subplots()
 
-        ax.plot(data[0],data[1],color=a_color,linestyle='-')
+    ax.plot(data[0],data[1],color=a_color,linestyle='-')
 
-        if fill == True:
-                ax.fill(data[0],data[1],**fill_kwargs)
+    if fill == True:
+            ax.fill(data[0],data[1],**fill_kwargs)
 
-        if return_fig == True:
-                return fig
+    if return_fig == True:
+            return fig
 
 
 def plotTrajectoryEllipses(traj, mass_level=0.99, theta_num=1e3, fill=False, data_out=False,ax=None, a_color='b'):
@@ -328,6 +352,28 @@ def plotDistances(bags_bundle):
     plt.grid(True)
     plt.legend(handles=patches)
     plt.title("Distance between lidars and GNSS")
+    plt.show()
+
+def plotMahalanobis(bags_bundle):
+    plt.figure(1)
+    plt.subplot(111)
+
+    patches = []
+    colors = []
+    for bag, bag_bundle in bags_bundle.iteritems():
+        for (topic, md), (topic, time) in zip(bag_bundle.statistics.mahalanobis.iteritems(), bag_bundle.statistics.mahalanobis_time.iteritems()):
+            if md.size > 0:
+                p = plt.plot(time, md)
+                bag_name = bag.split("/")[-1]
+                colors.append(p[0].get_color())
+                mean_md = np.mean(md)
+                patches.append( mpatches.Patch(color=p[0].get_color(), label=topic + " on " + bag_name + " mean: " + str(mean_md)) )
+
+    plt.xlabel("Number of record")
+    plt.ylabel("Mahalanobis distance")
+    plt.grid(True)
+    plt.legend(handles=patches)
+    plt.title("Mahalanobis distances")
     plt.show()
 
 def plotTrajectories(bags_bundle, with_ellipses=False):
@@ -366,14 +412,15 @@ if __name__ == "__main__":
     parser.add_argument("-b", "--bag", required=True, nargs="*", help="input bag files")
     parser.add_argument("-d", "--distance", default=False, action='store_true', help="Plot distance from lidars to gnss trajectory")
     parser.add_argument("-t", "--trajectory", default=False, action='store_true', help="Plot trajectories from lidar and gnss")
+    parser.add_argument("-md", "--mahalanobis", default=False, action='store_true', help="Plot mahalanbis distances of lidars and gnss")
+    parser.add_argument("-mir", "--meanimpactratio", default=False, action='store_true', help="Plot mean impact ratio of lidars")
     args = parser.parse_args()
 
     bags_bundle = {b:BagBundle() for b in args.bag}
     for b in args.bag:
         with Bag(b, 'r') as bag:
             # Load all bag data
-            bdata = loadBagData(bag)
-            stats = Statistics()
+            bdata, stats = loadBagData(bag)
 
             # Move gnss to vehicle frame (and remove first / last record due to wrong yaw)
             gnss_vhc_traj = moveGnssToVhc(bdata.gnss_traj)
@@ -394,3 +441,7 @@ if __name__ == "__main__":
         plotDistances(bags_bundle)
     if args.trajectory:
         plotTrajectories(bags_bundle)
+    if args.mahalanobis:
+        plotMahalanobis(bags_bundle)
+    if args.meanimpactration:
+        plotMir(bags_bundle)
