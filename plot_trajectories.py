@@ -17,7 +17,8 @@ from scipy.stats import chi2
 gnss_topicname = ["/gps_position"]
 lidar_topicnames = ["/lidar_pose", "/lms_pose", "/vlp_pose"]
 fusion_topicname = ["/vehicle_pose"]
-fusion_details_topicname = ["/localization/fusion_details"]
+#fusion_details_topicname = ["/localization/fusion_details"]
+fusion_details_topicname = ["/fusion/fusion_details"]
 
 vhc2gps_x = 0.642
 yaw_threshold = np.radians(2)
@@ -46,6 +47,8 @@ class Statistics:
     def __init__(self):
         self.lidar_distances = {l:np.empty([0]) for l in lidar_topicnames}
         self.lidar_interp_trajectories = {l:Trajectory2D() for l in lidar_topicnames}
+        self.fusion_distances = np.empty([0])
+        self.fusion_interp_traj = Trajectory2D()
         self.gnss2vhc_traj = Trajectory2D()
         self.mahalanobis = {l:np.empty([0]) for l in lidar_topicnames + gnss_topicname}
         self.mahalanobis_time = {l:np.empty([0]) for l in lidar_topicnames + gnss_topicname}
@@ -290,7 +293,7 @@ def computeEllipse(cov,mass_level=0.99):
     if eig_vec[0][1] < 0 and phi > 0:
         phi *= -1
 
-   	return semi_maj, semi_min, phi
+    return semi_maj, semi_min, phi
 
 def plotEllipse(semimaj=1,semimin=1,phi=0,xc=0,yc=0,theta_num=1e3,fill=False,data_out=False,ax=None,a_color='b'): 
     #generate data for ellipse
@@ -333,20 +336,27 @@ def plotTrajectoryEllipses(traj, mass_level=0.99, theta_num=1e3, fill=False, dat
 '''
 PLOTTING FUNCTIONS
 '''
-def plotDistances(bags_bundle):
+def plotDistances(bags_bundle, with_fusion=False):
     plt.figure(1)
     plt.subplot(111)
 
     patches = []
     colors = []
     for bag, bag_bundle in bags_bundle.iteritems():
+        bag_name = bag.split("/")[-1]
         for lidar in lidar_topicnames:
             if bag_bundle.bag_data.lidar_traj[lidar].size() > 0:
                 p = plt.plot(bag_bundle.statistics.lidar_interp_trajectories[lidar].time, bag_bundle.statistics.lidar_distances[lidar])
-                bag_name = bag.split("/")[-1]
                 colors.append(p[0].get_color())
                 mean_dist = np.mean(bag_bundle.statistics.lidar_distances[lidar])
                 patches.append( mpatches.Patch(color=p[0].get_color(), label=lidar + " on " + bag_name + " mean: " + str(mean_dist)) )
+
+        for fusion_topic in fusion_topicname:
+            if with_fusion:
+                p = plt.plot(bag_bundle.statistics.fusion_interp_traj.time, bag_bundle.statistics.fusion_distances)
+                colors.append(p[0].get_color())
+                mean_dist = np.mean(bag_bundle.statistics.fusion_distances)
+                patches.append( mpatches.Patch(color=p[0].get_color(), label=fusion_topic + " on " + bag_name + " mean: " + str(mean_dist)) )
 
     plt.xlabel("Time (s)")
     plt.ylabel("Distance (m)")
@@ -399,7 +409,7 @@ def plotMir(bags_bundle):
     plt.title("Mean Impact Ratio")
     plt.show()
 
-def plotTrajectories(bags_bundle, with_ellipses=False):
+def plotTrajectories(bags_bundle, with_ellipses=False, with_fusion=False):
     plt.figure(1)
     plt.subplot(111)
 
@@ -407,6 +417,7 @@ def plotTrajectories(bags_bundle, with_ellipses=False):
     colors = []
     for bag, bag_bundle in bags_bundle.iteritems():
         bag_name = bag.split("/")[-1]
+        # Plot each lidar trajectories
         for lidar in lidar_topicnames:
             if bag_bundle.bag_data.lidar_traj[lidar].size() > 0:
                 p = plt.plot(bag_bundle.bag_data.lidar_traj[lidar].x, bag_bundle.bag_data.lidar_traj[lidar].y)
@@ -416,10 +427,22 @@ def plotTrajectories(bags_bundle, with_ellipses=False):
                 if with_ellipses:
                     plotTrajectoryEllipses(bag_bundle.bag_data.lidar_traj[lidar], 0.99, 1e3,False,False,plt,p[0].get_color())
 
+        # Plot GNSS in vehicle frame
         p = plt.plot(bag_bundle.statistics.gnss2vhc_traj.x, bag_bundle.statistics.gnss2vhc_traj.y)
         if with_ellipses:
             plotTrajectoryEllipses(bag_bundle.statistics.gnss2vhc_traj, 0.99, 1e3,False,False,plt,p[0].get_color())
         patches.append( mpatches.Patch(color=p[0].get_color(), label=gnss_topicname[0] + " on " + bag_name))
+
+        # Plot fusion pose if asked
+        if with_fusion:
+            for fusion_topic in fusion_topicname:
+                if bag_bundle.bag_data.fusion_traj.size() > 0:
+                    p = plt.plot(bag_bundle.bag_data.fusion_traj.x, bag_bundle.bag_data.fusion_traj.y)
+                    colors.append(p[0].get_color())
+                    patches.append( mpatches.Patch(color=p[0].get_color(), label=fusion_topic + " on " + bag_name))
+                    if with_ellipses:
+                        plotTrajectoryEllipses(bag_bundle.bag_data.fusion_traj, 0.99, 1e3,False,False,plt,p[0].get_color())
+
 
 
     plt.xlabel("X (m)")
@@ -437,6 +460,8 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--trajectory", default=False, action='store_true', help="Plot trajectories from lidar and gnss")
     parser.add_argument("-md", "--mahalanobis", default=False, action='store_true', help="Plot mahalanbis distances of lidars and gnss")
     parser.add_argument("-mir", "--meanimpactratio", default=False, action='store_true', help="Plot mean impact ratio of lidars")
+    parser.add_argument("-cov", "--covariance", default=False, action='store_true', help="Plot covariances on trajectory plot")
+    parser.add_argument("-fusion", "--withfusion", default=False, action='store_true', help="Plot fusion topic as well")
     args = parser.parse_args()
 
     bags_bundle = {b:BagBundle() for b in args.bag}
@@ -450,20 +475,27 @@ if __name__ == "__main__":
             # Save new gnss trajectory
             stats.gnss2vhc_traj = gnss_vhc_traj
 
+            # For each lidar topics
             for lidar_topic in lidar_topicnames:
                 if bdata.lidar_traj[lidar_topic].size() > 0:
                     lidar_sync_traj, distances = computeDist(gnss_vhc_traj, bdata.lidar_traj[lidar_topic])
                     stats.lidar_distances[lidar_topic] = distances
                     stats.lidar_interp_trajectories[lidar_topic] = lidar_sync_traj
 
+            # For fusion topic
+            for fusion_topic in fusion_topicname:
+                if bdata.fusion_traj.size() > 0:
+                    fusion_sync_traj, distances = computeDist(gnss_vhc_traj, bdata.fusion_traj)
+                    stats.fusion_distances = distances
+                    stats.fusion_interp_traj = fusion_sync_traj
 
             bags_bundle[b].bag_data = bdata 
             bags_bundle[b].statistics = stats 
 
     if args.distance:
-        plotDistances(bags_bundle)
+        plotDistances(bags_bundle, args.withfusion)
     if args.trajectory:
-        plotTrajectories(bags_bundle)
+        plotTrajectories(bags_bundle, args.covariance, args.withfusion)
     if args.mahalanobis:
         plotMahalanobis(bags_bundle)
     if args.meanimpactratio:
