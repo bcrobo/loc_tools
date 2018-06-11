@@ -249,6 +249,7 @@ def loadBagData(bag):
         cov = np.array([[xx, xy],[yx, yy]])
         bdata.lidar_traj[topic].cov = np.vstack((bdata.lidar_traj[topic].cov, cov.reshape(1,2,2)))
         stats.mir[topic] = np.hstack((stats.mir[topic], np.array([msg.detail.matched_impact_ratio])))
+        stats.mir_time[topic] = np.hstack((stats.mir_time[topic], np.array([msg.header.stamp.to_sec()])))
 
     # Load fusion data
     for topic, msg, t in bag.read_messages(topics=fusion_topicname):
@@ -369,11 +370,33 @@ def plotMahalanobis(bags_bundle):
                 mean_md = np.mean(md)
                 patches.append( mpatches.Patch(color=p[0].get_color(), label=topic + " on " + bag_name + " mean: " + str(mean_md)) )
 
-    plt.xlabel("Number of record")
+    plt.xlabel("Time (s)")
     plt.ylabel("Mahalanobis distance")
     plt.grid(True)
     plt.legend(handles=patches)
     plt.title("Mahalanobis distances")
+    plt.show()
+
+def plotMir(bags_bundle):
+    plt.figure(1)
+    plt.subplot(111)
+
+    patches = []
+    colors = []
+    for bag, bag_bundle in bags_bundle.iteritems():
+        for (topic, mir), (topic, time) in zip(bag_bundle.statistics.mir.iteritems(), bag_bundle.statistics.mir_time.iteritems()):
+            if mir.size > 0:
+                p = plt.plot(time, mir)
+                bag_name = bag.split("/")[-1]
+                colors.append(p[0].get_color())
+                mean_mir = np.mean(mir)
+                patches.append( mpatches.Patch(color=p[0].get_color(), label=topic + " on " + bag_name + " mean: " + str(mean_mir)) )
+
+    plt.xlabel("Time (s)")
+    plt.ylabel("Mean Impact Ratio")
+    plt.grid(True)
+    plt.legend(handles=patches)
+    plt.title("Mean Impact Ratio")
     plt.show()
 
 def plotTrajectories(bags_bundle, with_ellipses=False):
@@ -443,5 +466,5 @@ if __name__ == "__main__":
         plotTrajectories(bags_bundle)
     if args.mahalanobis:
         plotMahalanobis(bags_bundle)
-    if args.meanimpactration:
+    if args.meanimpactratio:
         plotMir(bags_bundle)
