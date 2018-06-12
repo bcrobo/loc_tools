@@ -9,6 +9,7 @@ import matplotlib.patches as mpatches
 import scipy.spatial.distance as ssd
 import scipy.optimize as so
 import shapely.geometry as geom
+import tf
 
 from rosbag import Bag
 from scipy import interpolate
@@ -19,6 +20,7 @@ lidar_topicnames = ["/lidar_pose", "/lms_pose", "/vlp_pose"]
 fusion_topicname = ["/vehicle_pose"]
 #fusion_details_topicname = ["/localization/fusion_details"]
 fusion_details_topicname = ["/fusion/fusion_details"]
+attitude_topicname = ["/vehicle_attitude"]
 
 vhc2gps_x = 0.642
 yaw_threshold = np.radians(2)
@@ -42,6 +44,10 @@ class BagData:
         self.gnss_traj = Trajectory2D()
         self.fusion_traj = Trajectory2D()
         self.lidar_traj = {l:Trajectory2D() for l in lidar_topicnames}
+        self.roll = np.empty([0])
+        self.pitch = np.empty([0])
+        self.yaw = np.empty([0])
+        self.attitude_time = np.empty([0])
 
 class Statistics:
     def __init__(self):
@@ -265,6 +271,8 @@ def loadBagData(bag):
         yy = msg.pose.covariance[7]
         cov = np.array([[xx, xy],[yx, yy]])
         bdata.fusion_traj.cov = np.vstack((bdata.fusion_traj.cov, cov.reshape(1,2,2)))
+        r, p, y = tf.transformations.euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
+        bdata.yaw = np.hstack((bdata.yaw, np.degrees(y)))
 
     # Load fusion details
     for topic, msg, t in bag.read_messages(topics=fusion_details_topicname):
@@ -272,6 +280,15 @@ def loadBagData(bag):
         if sensor_topic:
             stats.mahalanobis[sensor_topic] = np.hstack((stats.mahalanobis[sensor_topic], np.array([msg.mahalanobis_dist])))
             stats.mahalanobis_time[sensor_topic] = np.hstack((stats.mahalanobis_time[sensor_topic], np.array([msg.header.stamp.to_sec()])))
+
+    # Load roll and pitch
+    for topic, msg, t in bag.read_messages(topics=attitude_topicname):
+        bdata.attitude_time = np.hstack((bdata.attitude_time, np.array([msg.header.stamp.to_sec()])))
+        r, p, y = tf.transformations.euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
+        r = np.degrees(r)
+        p = np.degrees(p)
+        bdata.roll = np.hstack((bdata.roll, r))
+        bdata.pitch = np.hstack((bdata.pitch, p))
 
     return bdata, stats
 
@@ -409,6 +426,40 @@ def plotMir(bags_bundle):
     plt.title("Mean Impact Ratio")
     plt.show()
 
+def plotAttitude(bags_bundle, with_yaw=False):
+    plt.figure(1)
+    plt.subplot(111)
+
+    patches = []
+    colors = []
+    for bag, bag_bundle in bags_bundle.iteritems():
+        bag_name = bag.split("/")[-1]
+        # Roll
+        if bag_bundle.bag_data.roll.size > 0:
+            p = plt.plot(bag_bundle.bag_data.attitude_time, bag_bundle.bag_data.roll)
+            colors.append(p[0].get_color())
+            patches.append( mpatches.Patch(color=p[0].get_color(), label="Roll on " + bag_name) )
+
+        # Pitch
+        if bag_bundle.bag_data.pitch.size > 0:
+            p = plt.plot(bag_bundle.bag_data.attitude_time, bag_bundle.bag_data.pitch)
+            colors.append(p[0].get_color())
+            patches.append( mpatches.Patch(color=p[0].get_color(), label="Pitch on " + bag_name) )
+
+        # Yaw
+        if with_yaw:
+            if bag_bundle.bag_data.yaw.size > 0:
+                p = plt.plot(bdata.fusion_traj.time, bag_bundle.bag_data.yaw)
+                colors.append(p[0].get_color())
+                patches.append( mpatches.Patch(color=p[0].get_color(), label="Yaw on " + bag_name) )
+
+    plt.xlabel("Time (s)")
+    plt.ylabel("Angle roll, pitch (deg)")
+    plt.grid(True)
+    plt.legend(handles=patches)
+    plt.title("Vehicle attitude")
+    plt.show()
+
 def plotTrajectories(bags_bundle, with_ellipses=False, with_fusion=False):
     plt.figure(1)
     plt.subplot(111)
@@ -462,6 +513,8 @@ if __name__ == "__main__":
     parser.add_argument("-mir", "--meanimpactratio", default=False, action='store_true', help="Plot mean impact ratio of lidars")
     parser.add_argument("-cov", "--covariance", default=False, action='store_true', help="Plot covariances on trajectory plot")
     parser.add_argument("-fusion", "--withfusion", default=False, action='store_true', help="Plot fusion topic as well")
+    parser.add_argument("-rp", "--attitude", default=False, action='store_true', help="Plot roll pitch of the vehicle")
+    parser.add_argument("-y", "--yaw", default=False, action='store_true', help="Plot additionally the yaw")
     args = parser.parse_args()
 
     bags_bundle = {b:BagBundle() for b in args.bag}
@@ -500,3 +553,5 @@ if __name__ == "__main__":
         plotMahalanobis(bags_bundle)
     if args.meanimpactratio:
         plotMir(bags_bundle)
+    if args.attitude:
+        plotAttitude(bags_bundle, args.yaw)
