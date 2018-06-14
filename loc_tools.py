@@ -40,8 +40,19 @@ class Trajectory2D:
     def size(self):
         return self.x.size
 
-class BagData:
+class Trajectory3D:
     def __init__(self):
+        self.child_frame = ""
+        self.time = np.empty([0])
+        self.x = np.empty([0])
+        self.y = np.empty([0])
+        self.z = np.empty([0])
+        self.roll = np.empty([0])
+        self.pitch = np.empty([0])
+        self.yaw = np.empty([0])
+
+class BagData:
+    def __init__(self, transforms={}):
         self.gnss_traj = Trajectory2D()
         self.fusion_traj = Trajectory2D()
         self.lidar_traj = {l:Trajectory2D() for l in lidar_topicnames}
@@ -49,6 +60,7 @@ class BagData:
         self.pitch = np.empty([0])
         self.yaw = np.empty([0])
         self.attitude_time = np.empty([0])
+        self.tf_frames = {parent:Trajectory3D() for parent,child in transforms.iteritems()}
 
 class Statistics:
     def __init__(self):
@@ -226,9 +238,25 @@ def sensorNameToTopic(sensor_name):
 
     return ""
 
-def loadBagData(bag):
+def convertToDictionnary(transforms):
+    if len(transforms) % 2 != 0:
+        print "- Error even number of tf transforms"
+        return
 
-    bdata = BagData()
+    transforms_dict = {}
+    for i in xrange(0, len(transforms), 2):
+        parent_frame = transforms[i]
+        transforms_dict[parent_frame] = transforms[i+1]
+    return transforms_dict
+
+def loadBagData(bag, transforms):
+
+    # Read tf transforms if needed
+    parent_child_frames = {}
+    if transforms:
+        parent_child_frames.update(convertToDictionnary(transforms))
+
+    bdata = BagData(parent_child_frames)
     stats = Statistics()
 
     # Load gnss data
@@ -290,6 +318,26 @@ def loadBagData(bag):
         p = np.degrees(p)
         bdata.roll = np.hstack((bdata.roll, r))
         bdata.pitch = np.hstack((bdata.pitch, p))
+
+    # Load tf transformations if needed
+    if transforms:
+        for topic, msg, t in bag.read_messages(topics=tf_topicname):
+            
+            asked = False
+            for transform in msg.transforms:
+                parent_frame = transform.header.frame_id
+                child_frame = transform.child_frame_id
+
+                if parent_frame in parent_child_frames and child_frame == parent_child_frames[parent_frame]:
+                    bdata.tf_frames[parent_frame].child_frame = child_frame
+                    bdata.tf_frames[parent_frame].time = np.hstack((bdata.tf_frames[parent_frame].time, np.array([transform.header.stamp.to_sec()])))
+                    bdata.tf_frames[parent_frame].x = np.hstack((bdata.tf_frames[parent_frame].x, np.array([transform.transform.translation.x])))
+                    bdata.tf_frames[parent_frame].y = np.hstack((bdata.tf_frames[parent_frame].y, np.array([transform.transform.translation.y])))
+                    bdata.tf_frames[parent_frame].z = np.hstack((bdata.tf_frames[parent_frame].z, np.array([transform.transform.translation.z])))
+                    r, p, y = tf.transformations.euler_from_quaternion([transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w])
+                    bdata.tf_frames[parent_frame].roll = np.hstack((bdata.tf_frames[parent_frame].roll, np.array([np.degrees(r)]))) 
+                    bdata.tf_frames[parent_frame].pitch = np.hstack((bdata.tf_frames[parent_frame].pitch, np.array([np.degrees(p)]))) 
+                    bdata.tf_frames[parent_frame].yaw = np.hstack((bdata.tf_frames[parent_frame].yaw, np.array([np.degrees(y)])))
 
     return bdata, stats
 
@@ -461,6 +509,43 @@ def plotAttitude(bags_bundle, with_yaw=False):
     plt.title("Vehicle attitude")
     plt.show()
 
+def plotTransformsAttitude(bags_bundle, with_yaw=False):
+    plt.figure(1)
+    plt.subplot(111)
+
+    patches = []
+    colors = []
+    for bag, bag_bundle in bags_bundle.iteritems():
+        bag_name = bag.split("/")[-1]
+        for frame_id, traj3d in bag_bundle.bag_data.tf_frames.iteritems():
+            # Roll
+            if traj3d.x.size > 0:
+                p = plt.plot(traj3d.time, traj3d.roll)
+                colors.append(p[0].get_color())
+                patches.append( mpatches.Patch(color=p[0].get_color(), label=frame_id + " to "  + traj3d.child_frame + " roll on " + bag_name) )
+
+            # Pitch
+            if traj3d.y.size > 0:
+                p = plt.plot(traj3d.time, traj3d.pitch)
+                colors.append(p[0].get_color())
+                patches.append( mpatches.Patch(color=p[0].get_color(), label=frame_id + " to "  + traj3d.child_frame + " pitch on " + bag_name) )
+
+            if with_yaw:
+                # Yaw
+                if traj3d.y.size > 0:
+                    p = plt.plot(traj3d.time, traj3d.yaw)
+                    colors.append(p[0].get_color())
+                    patches.append( mpatches.Patch(color=p[0].get_color(), label=frame_id + " to "  + traj3d.child_frame + " yaw on " + bag_name) )
+
+
+    plt.xlabel("Time (s)")
+    plt.ylabel("Angle roll, pitch (deg)")
+    plt.grid(True)
+    plt.legend(handles=patches)
+    plt.title("TF frames attitude")
+    plt.show()
+
+
 def plotTrajectories(bags_bundle, with_ellipses=False, with_fusion=False):
     plt.figure(1)
     plt.subplot(111)
@@ -516,13 +601,14 @@ if __name__ == "__main__":
     parser.add_argument("-fusion", "--withfusion", default=False, action='store_true', help="Plot fusion topic as well")
     parser.add_argument("-rp", "--attitude", default=False, action='store_true', help="Plot roll pitch of the vehicle")
     parser.add_argument("-y", "--yaw", default=False, action='store_true', help="Plot additionally the yaw")
+    parser.add_argument("-tf", "--transforms", default=False, nargs="*", help="Plot attitude of asked tf frames")
     args = parser.parse_args()
 
     bags_bundle = {b:BagBundle() for b in args.bag}
     for b in args.bag:
         with Bag(b, 'r') as bag:
             # Load all bag data
-            bdata, stats = loadBagData(bag)
+            bdata, stats = loadBagData(bag, args.transforms)
 
             # Move gnss to vehicle frame (and remove first / last record due to wrong yaw)
             gnss_vhc_traj = moveGnssToVhc(bdata.gnss_traj)
@@ -556,3 +642,5 @@ if __name__ == "__main__":
         plotMir(bags_bundle)
     if args.attitude:
         plotAttitude(bags_bundle, args.yaw)
+    if args.transforms:
+        plotTransformsAttitude(bags_bundle, args.yaw)
