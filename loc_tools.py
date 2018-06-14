@@ -60,7 +60,7 @@ class BagData:
         self.pitch = np.empty([0])
         self.yaw = np.empty([0])
         self.attitude_time = np.empty([0])
-        self.tf_frames = {parent:Trajectory3D() for parent,child in transforms.iteritems()}
+        self.tf_frames = transforms
 
 class Statistics:
     def __init__(self):
@@ -245,8 +245,13 @@ def convertToDictionnary(transforms):
 
     transforms_dict = {}
     for i in xrange(0, len(transforms), 2):
+
         parent_frame = transforms[i]
-        transforms_dict[parent_frame] = transforms[i+1]
+        transforms_dict[parent_frame] = {}
+        
+    for i in xrange(0, len(transforms), 2):
+        transforms_dict[parent_frame][transforms[i+1]] = Trajectory3D()
+
     return transforms_dict
 
 def loadBagData(bag, transforms):
@@ -328,16 +333,15 @@ def loadBagData(bag, transforms):
                 parent_frame = transform.header.frame_id
                 child_frame = transform.child_frame_id
 
-                if parent_frame in parent_child_frames and child_frame == parent_child_frames[parent_frame]:
-                    bdata.tf_frames[parent_frame].child_frame = child_frame
-                    bdata.tf_frames[parent_frame].time = np.hstack((bdata.tf_frames[parent_frame].time, np.array([transform.header.stamp.to_sec()])))
-                    bdata.tf_frames[parent_frame].x = np.hstack((bdata.tf_frames[parent_frame].x, np.array([transform.transform.translation.x])))
-                    bdata.tf_frames[parent_frame].y = np.hstack((bdata.tf_frames[parent_frame].y, np.array([transform.transform.translation.y])))
-                    bdata.tf_frames[parent_frame].z = np.hstack((bdata.tf_frames[parent_frame].z, np.array([transform.transform.translation.z])))
+                if parent_frame in parent_child_frames and child_frame in parent_child_frames[parent_frame]:
+                    bdata.tf_frames[parent_frame][child_frame].time = np.hstack((bdata.tf_frames[parent_frame][child_frame].time, np.array([transform.header.stamp.to_sec()])))
+                    bdata.tf_frames[parent_frame][child_frame].x = np.hstack((bdata.tf_frames[parent_frame][child_frame].x, np.array([transform.transform.translation.x])))
+                    bdata.tf_frames[parent_frame][child_frame].y = np.hstack((bdata.tf_frames[parent_frame][child_frame].y, np.array([transform.transform.translation.y])))
+                    bdata.tf_frames[parent_frame][child_frame].z = np.hstack((bdata.tf_frames[parent_frame][child_frame].z, np.array([transform.transform.translation.z])))
                     r, p, y = tf.transformations.euler_from_quaternion([transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w])
-                    bdata.tf_frames[parent_frame].roll = np.hstack((bdata.tf_frames[parent_frame].roll, np.array([np.degrees(r)]))) 
-                    bdata.tf_frames[parent_frame].pitch = np.hstack((bdata.tf_frames[parent_frame].pitch, np.array([np.degrees(p)]))) 
-                    bdata.tf_frames[parent_frame].yaw = np.hstack((bdata.tf_frames[parent_frame].yaw, np.array([np.degrees(y)])))
+                    bdata.tf_frames[parent_frame][child_frame].roll = np.hstack((bdata.tf_frames[parent_frame][child_frame].roll, np.array([np.degrees(r)]))) 
+                    bdata.tf_frames[parent_frame][child_frame].pitch = np.hstack((bdata.tf_frames[parent_frame][child_frame].pitch, np.array([np.degrees(p)]))) 
+                    bdata.tf_frames[parent_frame][child_frame].yaw = np.hstack((bdata.tf_frames[parent_frame][child_frame].yaw, np.array([np.degrees(y)])))
 
     return bdata, stats
 
@@ -517,25 +521,26 @@ def plotTransformsAttitude(bags_bundle, with_yaw=False):
     colors = []
     for bag, bag_bundle in bags_bundle.iteritems():
         bag_name = bag.split("/")[-1]
-        for frame_id, traj3d in bag_bundle.bag_data.tf_frames.iteritems():
-            # Roll
-            if traj3d.x.size > 0:
-                p = plt.plot(traj3d.time, traj3d.roll)
-                colors.append(p[0].get_color())
-                patches.append( mpatches.Patch(color=p[0].get_color(), label=frame_id + " to "  + traj3d.child_frame + " roll on " + bag_name) )
-
-            # Pitch
-            if traj3d.y.size > 0:
-                p = plt.plot(traj3d.time, traj3d.pitch)
-                colors.append(p[0].get_color())
-                patches.append( mpatches.Patch(color=p[0].get_color(), label=frame_id + " to "  + traj3d.child_frame + " pitch on " + bag_name) )
-
-            if with_yaw:
-                # Yaw
-                if traj3d.y.size > 0:
-                    p = plt.plot(traj3d.time, traj3d.yaw)
+        for parent_frame_id, child_transforms in bag_bundle.bag_data.tf_frames.iteritems():
+            for child_frame_id, traj3d in child_transforms.iteritems():
+                # Roll
+                if traj3d.x.size > 0:
+                    p = plt.plot(traj3d.time, traj3d.roll)
                     colors.append(p[0].get_color())
-                    patches.append( mpatches.Patch(color=p[0].get_color(), label=frame_id + " to "  + traj3d.child_frame + " yaw on " + bag_name) )
+                    patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " roll on " + bag_name) )
+
+                # Pitch
+                if traj3d.y.size > 0:
+                    p = plt.plot(traj3d.time, traj3d.pitch)
+                    colors.append(p[0].get_color())
+                    patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " pitch on " + bag_name) )
+
+                if with_yaw:
+                    # Yaw
+                    if traj3d.y.size > 0:
+                        p = plt.plot(traj3d.time, traj3d.yaw)
+                        colors.append(p[0].get_color())
+                        patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " yaw on " + bag_name) )
 
 
     plt.xlabel("Time (s)")
