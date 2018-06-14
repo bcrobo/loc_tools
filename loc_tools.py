@@ -21,6 +21,7 @@ fusion_topicname = ["/vehicle_pose"]
 #fusion_details_topicname = ["/localization/fusion_details"]
 fusion_details_topicname = ["/fusion/fusion_details"]
 attitude_topicname = ["/vehicle_attitude"]
+tf_topicname = ["/tf"]
 
 vhc2gps_x = 0.642
 yaw_threshold = np.radians(2)
