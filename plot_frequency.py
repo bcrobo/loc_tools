@@ -48,13 +48,16 @@ if __name__ == "__main__":
             p = ax.plot(times[t], periods[t])
             colors.append(p[0].get_color())
             patches.append( mpatches.Patch(color=p[0].get_color(), label=t) )
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Sensor period (s)")
+            ax.grid(True)
         
             ax2.plot(times[t], [0] * len(times[t]), linestyle='--', marker='o', color=p[0].get_color())
+            ax2.set_xlabel("Time (s)")
+            ax2.set_ylabel("Received messages")
+            ax2.grid(True)
 
         ax.legend(handles=patches)
         ax2.legend(handles=patches)
-        plt.xlabel("Time (s)")
-        plt.ylabel("Dt (in s)")
-        plt.grid(True)
         plt.show()
             
