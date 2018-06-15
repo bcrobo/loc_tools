@@ -513,7 +513,7 @@ def plotAttitude(bags_bundle, with_yaw=False):
     plt.title("Vehicle attitude")
     plt.show()
 
-def plotTransformsAttitude(bags_bundle, with_yaw=False):
+def plotTransformsAttitude(bags_bundle, with_attitude=True, with_yaw=False, with_position=False):
     plt.figure(1)
     plt.subplot(111)
 
@@ -523,24 +523,42 @@ def plotTransformsAttitude(bags_bundle, with_yaw=False):
         bag_name = bag.split("/")[-1]
         for parent_frame_id, child_transforms in bag_bundle.bag_data.tf_frames.iteritems():
             for child_frame_id, traj3d in child_transforms.iteritems():
-                # Roll
-                if traj3d.x.size > 0:
-                    p = plt.plot(traj3d.time, traj3d.roll)
-                    colors.append(p[0].get_color())
-                    patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " roll on " + bag_name) )
+                if with_attitude:
+                    # Roll
+                    if traj3d.roll.size > 0:
+                        p = plt.plot(traj3d.time, traj3d.roll)
+                        colors.append(p[0].get_color())
+                        patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " roll on " + bag_name) )
 
-                # Pitch
-                if traj3d.y.size > 0:
-                    p = plt.plot(traj3d.time, traj3d.pitch)
-                    colors.append(p[0].get_color())
-                    patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " pitch on " + bag_name) )
+                    # Pitch
+                    if traj3d.pitch.size > 0:
+                        p = plt.plot(traj3d.time, traj3d.pitch)
+                        colors.append(p[0].get_color())
+                        patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " pitch on " + bag_name) )
 
                 if with_yaw:
                     # Yaw
-                    if traj3d.y.size > 0:
+                    if traj3d.yaw.size > 0:
                         p = plt.plot(traj3d.time, traj3d.yaw)
                         colors.append(p[0].get_color())
                         patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " yaw on " + bag_name) )
+
+                if with_position:
+                    # x
+                    if traj3d.x.size > 0:
+                        p = plt.plot(traj3d.time, traj3d.x)
+                        colors.append(p[0].get_color())
+                        patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " x on " + bag_name) )
+                    # y
+                    if traj3d.y.size > 0:
+                        p = plt.plot(traj3d.time, traj3d.y)
+                        colors.append(p[0].get_color())
+                        patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " y on " + bag_name) )
+                    # z
+                    if traj3d.z.size > 0:
+                        p = plt.plot(traj3d.time, traj3d.z)
+                        colors.append(p[0].get_color())
+                        patches.append( mpatches.Patch(color=p[0].get_color(), label=parent_frame_id + " to "  + child_frame_id + " z on " + bag_name) )
 
 
     plt.xlabel("Time (s)")
@@ -607,6 +625,8 @@ if __name__ == "__main__":
     parser.add_argument("-rp", "--attitude", default=False, action='store_true', help="Plot roll pitch of the vehicle")
     parser.add_argument("-y", "--yaw", default=False, action='store_true', help="Plot additionally the yaw")
     parser.add_argument("-tf", "--transforms", default=False, nargs="*", help="Plot attitude of asked tf frames")
+    parser.add_argument("-p", "--position", action='store_true', default=False, help="Plot position of tf frames")
+
     args = parser.parse_args()
 
     bags_bundle = {b:BagBundle() for b in args.bag}
@@ -648,4 +668,8 @@ if __name__ == "__main__":
     if args.attitude:
         plotAttitude(bags_bundle, args.yaw)
     if args.transforms:
-        plotTransformsAttitude(bags_bundle, args.yaw)
+        arg_with_attitude =True
+        print args.position
+        if args.position:
+            arg_with_attitude=False
+        plotTransformsAttitude(bags_bundle, with_attitude=arg_with_attitude, with_yaw=args.yaw, with_position=args.position)
