@@ -669,7 +669,6 @@ if __name__ == "__main__":
         plotAttitude(bags_bundle, args.yaw)
     if args.transforms:
         arg_with_attitude =True
-        print args.position
         if args.position:
             arg_with_attitude=False
         plotTransformsAttitude(bags_bundle, with_attitude=arg_with_attitude, with_yaw=args.yaw, with_position=args.position)

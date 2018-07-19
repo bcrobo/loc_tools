@@ -26,16 +26,15 @@ if __name__ == "__main__":
         prev_time = {t:rospy.Time() for t in args.topics} 
 
         # Get topics frequency
-        for topic, msg, t in bag:
-            if topic in args.topics:
-                if first_iteration[topic]:
-                    first_times[topic] = msg.header.stamp.to_sec()
-                    prev_time[topic] = msg.header.stamp
-                    first_iteration[topic] = False
-                else:
-                    times[topic].append( msg.header.stamp.to_sec() - first_times[topic] )
-                    periods[topic].append( (msg.header.stamp - prev_time[topic]).to_sec() )
-                    prev_time[topic] = msg.header.stamp
+        for topic, msg, t in bag.read_messages(topics=args.topics):
+            if first_iteration[topic]:
+                first_times[topic] = msg.header.stamp.to_sec()
+                prev_time[topic] = msg.header.stamp
+                first_iteration[topic] = False
+            else:
+                times[topic].append( msg.header.stamp.to_sec() - first_times[topic] )
+                periods[topic].append( (msg.header.stamp - prev_time[topic]).to_sec() )
+                prev_time[topic] = msg.header.stamp
 
         # Plot
         fig = plt.figure()
