@@ -8,6 +8,22 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import rospy
 
+def start_times(topics, bag):
+    start_times = {t:rospy.Time() for t in topics}
+    read = {t:False for t in topics}
+    for topic, msg, t in bag.read_messages(topics=topics):
+        if not read[topic]:
+            start_times[topic] = msg.header.stamp
+            read[topic] = True
+        if all(value == True for value in read.values()):
+            break
+    return start_times
+
+def find_start_time(bag, topics):
+    all_start_times = start_times(topics, bag)
+    topic = min(all_start_times, key=all_start_times.get)
+    return all_start_times[topic]
+
 # Main
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='plot frequency of the given topics from an input bag file')
@@ -25,14 +41,16 @@ if __name__ == "__main__":
         times = {t:[] for t in args.topics}
         prev_time = {t:rospy.Time() for t in args.topics} 
 
+        start_time = find_start_time(bag, args.topics)
+
         # Get topics frequency
         for topic, msg, t in bag.read_messages(topics=args.topics):
             if first_iteration[topic]:
-                first_times[topic] = msg.header.stamp.to_sec()
+                times[topic].append( msg.header.stamp.to_sec() - start_time.to_sec() )
                 prev_time[topic] = msg.header.stamp
                 first_iteration[topic] = False
             else:
-                times[topic].append( msg.header.stamp.to_sec() - first_times[topic] )
+                times[topic].append( msg.header.stamp.to_sec() - start_time.to_sec() )
                 periods[topic].append( (msg.header.stamp - prev_time[topic]).to_sec() )
                 prev_time[topic] = msg.header.stamp
 
@@ -44,7 +62,7 @@ if __name__ == "__main__":
         colors = []
         patches = []
         for t in args.topics:
-            p = ax.plot(times[t], periods[t])
+            p = ax.plot(times[t][1:], periods[t])
             colors.append(p[0].get_color())
             patches.append( mpatches.Patch(color=p[0].get_color(), label=t) )
             ax.set_xlabel("Time (s)")
