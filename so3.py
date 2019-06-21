@@ -86,17 +86,35 @@ def quat_to_rot_matx(q):
         [2 * (b * d - a * c), 2 * (c * d - a * b), a ** 2 - b ** 2 - c ** 2 + d ** 2]
     ])
 
-
-def rot_matx_to_euler(R):
+def rot_matx_to_eulerZYX(R):
     r31 = R[2, 0]
     r32 = R[2, 1]
     r33 = R[2, 2]
     r21 = R[1, 0]
     r11 = R[0, 0]
-    roll = np.arctan(r32 / r33)
-    pitch = np.arcsin(-r31)
-    yaw = np.arctan(r21 / r11)
-    return roll, pitch, yaw
+    r12 = R[0, 1]
+    r22 = R[1, 1]
+
+    eps = 1e-6
+    if not ((1.0 - np.abs(r31)) < eps):
+        pitch1 = -np.arcsin(r31)
+        pitch2 = np.pi - pitch1
+        roll1 = np.arctan2(r32/np.cos(pitch1), r33/np.cos(pitch1))
+        roll2 = np.arctan2(r32/np.cos(pitch2), r33/np.cos(pitch2))
+        yaw1 = np.arctan2(r21/np.cos(pitch1), r11/np.cos(pitch1))
+        yaw2 = np.arctan2(r21/np.cos(pitch2), r11/np.cos(pitch2))
+        return (yaw1, pitch1, roll1), (yaw2, pitch2, roll2)
+    else:
+        # if r31 == -1.0 (then pitch is pi/2)
+        yaw = 0
+        if (r31 + 1.0) < eps:
+            pitch = np.pi/2.0
+            roll = np.arctan2(r12, r22)
+        # then r31 == 1.0 (then pitch is -pi/2)
+        else:
+            pitch = -np.pi/2.0
+            roll = np.arctan2(r12, -r22)
+        return yaw, pitch, roll
 
 
 def quat_to_euler(q):
