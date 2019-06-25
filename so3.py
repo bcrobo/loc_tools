@@ -1,6 +1,6 @@
 import numpy as np
 
-
+# [v]x
 def skew_sym_matx(v):
     return np.array([[0, -v[2], v[1]],
                      [v[2], 0, -v[0]],
@@ -56,10 +56,7 @@ def log_map_quat(q):
     return angle, axis
 
 
-# roll - [-pi pi]
-# pitch [-pi/2 pi/2]
-# yaw [0 2pi]
-def euler_to_rot_matx(roll, pitch, yaw):
+def eulerZYX_to_rot_matx(yaw, pitch, roll):
     cr = np.cos(roll)
     sr = np.sin(roll)
     cp = np.cos(pitch)
@@ -85,6 +82,7 @@ def quat_to_rot_matx(q):
         [2 * (b * c - a * d), a ** 2 - b ** 2 + c ** 2 - d ** 2, 2 * (c * d + a * b)],
         [2 * (b * d - a * c), 2 * (c * d - a * b), a ** 2 - b ** 2 - c ** 2 + d ** 2]
     ])
+
 
 def rot_matx_to_eulerZYX(R):
     r31 = R[2, 0]
@@ -118,19 +116,11 @@ def rot_matx_to_eulerZYX(R):
 
 
 def quat_to_euler(q):
-    a = q[0]  # w
-    b = q[1]  # x
-    c = q[2]  # y
-    d = q[3]  # z
-    roll = np.arctan((2 * c * d + 2 * a * b) / (a ** 2 - b ** 2 - c ** 2 + d ** 2))
-    pitch = np.arcsin(-2 * b * d + 2 * a * c)
-    yaw = np.arctan((2 * b * c + 2 * a * d) / (a ** 2 + b ** 2 - c ** 2 - d ** 2))
-    return roll, pitch, yaw
+    return rot_matx_to_eulerZYX(quat_to_rot_matx(q))
 
 
-def euler_to_quat(roll, pitch, yaw):
-    R = euler_to_rot_matx(roll, pitch, yaw)
-    return rot_matx_to_quat(R)
+def eulerZYX_to_quat(yaw, pitch, roll):
+    return rot_matx_to_quat(euler_to_rot_matx(roll, pitch, yaw))
 
 
 def rot_matx_to_quat(R):
