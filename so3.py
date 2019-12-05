@@ -1,7 +1,7 @@
 import numpy as np
 
 # [v]x
-def skew_sym_matx(v):
+def skew(v):
     return np.array([[0, -v[2], v[1]],
                      [v[2], 0, -v[0]],
                      [-v[1], v[0], 0]])
@@ -24,9 +24,9 @@ def rotv_to_angle_axis(rotv):
 
 
 def rodrigues(angle, axis):
-    skew_square = skew_sym_matx(np.square(axis))
-    skew = skew_sym_matx(axis)
-    return np.identity(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * skew_square
+    axis_x_sq = skew(np.square(axis))
+    axis_x = skew(axis)
+    return np.identity(3) + np.sin(angle) * axis_x + (1 - np.cos(angle)) * axis_x_sq
 
 
 def exp_map_rot_matx(rotv):
