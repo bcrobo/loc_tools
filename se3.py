@@ -21,7 +21,7 @@ def Vinv(angle, axis):
 
 def exp(tau):
   u = tau[0:3]
-  w = tau[3:7]
+  w = tau[3:6]
   angle, axis = so3.rotv_to_angle_axis(w)
   R = so3.rodrigues(angle, axis)
   Vt = np.dot(V(angle,axis), u)
@@ -38,3 +38,12 @@ def log(T):
   tau[0:3] = np.dot(V_inv, t)
   tau[3:7] = angle * axis
   return tau
+
+def adj(T):
+  Adj = np.zeros((6,6))
+  R = T[0:3, 0:3]
+  t = T[0:3, 3]
+  Adj[0:3, 0:3] = R
+  Adj[0:3, 3:6] = np.dot(so3.skew(t), R)
+  Adj[3:6, 3:6] = R
+  return Adj
