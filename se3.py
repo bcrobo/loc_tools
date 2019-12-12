@@ -28,6 +28,7 @@ def exp(tau):
   T = np.zeros((4,4))
   T[0:3, 0:3] = R
   T[0:3, 3] = Vt
+  T[3, 3] = 1
   return T
 
 def log(T):
@@ -47,3 +48,10 @@ def adj(T):
   Adj[0:3, 3:6] = np.dot(so3.skew(t), R)
   Adj[3:6, 3:6] = R
   return Adj
+
+def inv(T):
+  Tinv = np.eye(4, 4)
+  Rt = np.transpose(T[0:3, 0:3])
+  Tinv[0:3, 0:3] = Rt
+  Tinv[0:3, 3] = -np.dot(Rt, T[0:3, 3])
+  return Tinv
