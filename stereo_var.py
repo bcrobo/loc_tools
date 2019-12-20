@@ -30,13 +30,19 @@ def Jg(K, p):
   cy = K[1,2]
   d_sqr = d * d
   return np.array([
-    [-b / d, 0, b * (u - cx) / d_sqr],
-    [0, -b / d, b * (v - cy) / d_sqr],
+    [b / d, 0, b * (cx - u) / d_sqr],
+    [0, b / d, b * (cy - v) / d_sqr],
     [0, 0, -fb/d_sqr]])
 
+# Jacobian of the function that
+# convert a point from the opencv
+# coordinate system to the ros
+# coordinate system
 def Jf():
   return np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
 
+# Jacobian of the overall function
+# using the chain rule
 def J(K, p):
   return np.dot(Jf(), Jg(K, p))
 
@@ -88,7 +94,7 @@ def ellipsoid(center, cov, confidence=0.95):
 
 
 # Std of the 2d point on u, v, and disparity
-sig = np.array([10, 10, 10])
+sig = np.array([1, 1, 10])
 # Variance of the 3d point
 var = np.diag(np.power(sig, 2))
 
@@ -96,7 +102,7 @@ var = np.diag(np.power(sig, 2))
 K = np.array([[f, 0, 533.09], [0, f, 418.08], [0, 0, 1]])
 
 # uv, d point
-p = np.array([256.0, 192.0, disparity(3.0)])
+p = np.array([256.0, 192.0, disparity(10.0)])
 
 # Propagate uncertainty
 Jac = J(K, p)
