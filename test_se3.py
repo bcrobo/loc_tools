@@ -18,12 +18,10 @@ E0 = np.zeros((6,6))
 T0[0,3] = r
 
 # Uncertainty on in-plane rotation
-def uncertainty_in_plane(sigma):
-  sigma_sq = sigma * sigma
-  E = np.zeros((6,6))
-  E[5,5] = sigma_sq
-  Psi = [0, 0, 0, 0, 0, sigma]
-  return Psi, E
+def get_uncertainty(sigma):
+  sigma_sq = np.power(sigma, 2)
+  E = np.diag(sigma_sq)
+  return sigma, E
 
 # Compute the confidence ellipse
 def confidence_ellipse(pose, cov, confidence=0.95):
@@ -56,7 +54,6 @@ def confidence_ellipse(pose, cov, confidence=0.95):
 # Simulate 1000 samples for 100 steps
 N = 1000
 K = 100
-T = T0
 samples = [[PoseWithCov for j in range(K)] for i in range(N)]
 for i in range(N):
   Tk = np.eye(4,4)
@@ -65,7 +62,7 @@ for i in range(N):
   random_sigs = np.random.uniform(low=-sigma, high=sigma, size=(K))
   for j in range(1, K):
     # Random sampling
-    Psi, E = uncertainty_in_plane(random_sigs[j])
+    Psi, E = get_uncertainty(np.array([0.1, 0, 0, 0, 0, random_sigs[j]]))
     Adj = se3.adj(Tk)
     # Update mean
     Tk = np.linalg.multi_dot((Tk, se3.exp(Psi), T0))
@@ -75,17 +72,17 @@ for i in range(N):
 
 # Draw
 plt.figure(0)
-for i in range(N):
+for i in range(N-1, N):
   x = []
   y = []
   for j in range(K):
-    pose2d = samples[0][j].pose[0:2,3]
-    cov2d = samples[0][-1].cov[0:2, 0:2]
+    pose2d = samples[i][j].pose[0:2,3]
+    cov2d = samples[i][j].cov[0:2, 0:2]
     x.append(pose2d[0])
     y.append(pose2d[1])
     xe, ye = confidence_ellipse(pose2d, cov2d)
-#    plt.plot(xe, ye)
-  plt.plot(x,y)
+    plt.plot(xe, ye)
+  plt.scatter(x,y)
 plt.xlim((-5, 105))
 plt.xlabel("X (m)")
 plt.ylabel("Y (m)")
