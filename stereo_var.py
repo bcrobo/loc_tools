@@ -79,8 +79,6 @@ def ellipsoid(center, cov, confidence=0.95):
   U, s, rotation = np.linalg.svd(cov)
   print("Scales")
   print(s)
-  print("Rotation")
-  print(rotation)
   
   chi_sqr_val = np.sqrt(chi2.ppf(confidence, cov.shape[0]))
   radii = np.sqrt(chi_sqr_val * s)
@@ -110,9 +108,9 @@ v = 192.0
 # Plot
 fig = plt.figure()
 ax = fig.gca(projection='3d')
-for d in np.arange(200, 2, -50):
+for z in np.arange(2, 50, 5):
   # uv, d point
-  p = np.array([u, v, disparity(d)])
+  p = np.array([u, v, disparity(z)])
 
   # Propagate uncertainty
   Jac = J(K, p)
