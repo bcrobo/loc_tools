@@ -30,8 +30,10 @@ def Jg(K, p):
   cy = K[1,2]
   d_sqr = d * d
   return np.array([
-    [b / d, 0, b * (cx - u) / d_sqr],
-    [0, b / d, b * (cy - v) / d_sqr],
+#    [b / d, 0, b * (cx - u) / d_sqr],
+#    [0, b / d, b * (cy - v) / d_sqr],
+    [b / d, 0, 0],
+    [0, b / d, 0],
     [0, 0, -fb/d_sqr]])
 
 # Jacobian of the function that
@@ -94,7 +96,7 @@ def ellipsoid(center, cov, confidence=0.95):
 
 
 # Std of the 2d point on u, v, and disparity
-sig = np.array([1, 1, 10])
+sig = np.array([1, 1, 0.5])
 # Variance of the 3d point
 var = np.diag(np.power(sig, 2))
 
@@ -102,28 +104,37 @@ var = np.diag(np.power(sig, 2))
 K = np.array([[f, 0, 533.09], [0, f, 418.08], [0, 0, 1]])
 
 # uv, d point
-p = np.array([256.0, 192.0, disparity(10.0)])
+p3 = np.array([256.0, 192.0, disparity(3.0)])
+p10 = np.array([256.0, 192.0, disparity(10.0)])
 
 # Propagate uncertainty
-Jac = J(K, p)
-var_3d = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
+Jac = J(K, p3)
+var_3d_p3 = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
+Jac = J(K, p10)
+var_3d_p10 = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
 
 # Project the point onto the image plane
-xyz = reconstruct(K, p)
+xyz3 = reconstruct(K, p3)
+xyz10 = reconstruct(K, p10)
 print("Reconstructed")
-print(xyz)
+print(xyz3)
+print(xyz10)
 
 # Compute ellipsoid confidence
-x, y, z = ellipsoid(xyz, var_3d)
+x3, y3, z3 = ellipsoid(xyz3, var_3d_p3)
+x10, y10, z10 = ellipsoid(xyz10, var_3d_p10)
 
 
 # Plot
 fig = plt.figure()
 ax = fig.gca(projection='3d')
 # Unit vectors
-ax.plot([0, xyz[0]], [0, xyz[1]], zs=[0, xyz[2]])
-ax.plot_wireframe(x, y, z,  rstride=4, cstride=4, color='b', alpha=0.2)
-ax.scatter(xyz[0], xyz[1], xyz[2])
+ax.plot([0, xyz3[0]], [0, xyz3[1]], zs=[0, xyz3[2]])
+ax.plot([0, xyz10[0]], [0, xyz10[1]], zs=[0, xyz10[2]])
+ax.plot_wireframe(x3, y3, z3,  rstride=4, cstride=4, color='b', alpha=0.2)
+ax.plot_wireframe(x10, y10, z10,  rstride=4, cstride=4, color='m', alpha=0.2)
+ax.scatter(xyz3[0], xyz3[1], xyz3[2])
+ax.scatter(xyz10[0], xyz10[1], xyz10[2])
 ax.set_xlabel('X axis')
 ax.set_ylabel('Y axis')
 ax.set_zlabel('Z axis')
