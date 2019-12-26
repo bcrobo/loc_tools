@@ -8,114 +8,174 @@ from scipy.stats import chi2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-# baseline
-b = 0.3
-# focal length
-f = 585.04
-fb = f*b
+Pose = collections.namedtuple('Pose', ['rvec', 'tvec'])
 
-def direction(elevation, azimuth):
+# Pass a point from OpenCV
+# to ROS coordinate system
+ROS_R_CV = np.array([
+    [0,0,1],
+    [-1,0,0],
+    [0,-1,0]])
+CV_R_ROS = np.transpose(ROS_R_CV)
+
+# Compute the unit vector indicating
+# the direction of the current feature
+def direction(azimuth, elevation):
   return np.array([
+    np.cos(elevation) * np.cos(azimuth),
     np.cos(elevation) * np.sin(azimuth),
-    -np.sin(elevation),
-    np.cos(elevation) * np.cos(azimuth)])
- 
-def inverse_depth(pose, K, u, v):
-  cam_xyz = pose.tvec
+    np.sin(elevation)])
+
+# Jacobian of the direction function
+# wrt azimuth and elevation angles
+def J_direction(azimuth, elevation):
+  ce = np.cos(elevation)
+  ca = np.cos(azimuth)
+  se = np.sin(elevation)
+  sa = np.sin(azimuth)
+  return np.array([
+    [-ce*sa, -se*ca],
+    [ce*ca, -se*sa],
+    [0, ce]])
+    
+# Compute the inverse depth representation
+# of a feature 
+def inverse_depth(pose, K, u, v, rho=0.1):
+  # Normalized feature coordinate
   cx = K[0,2]
   cy = K[1,2]
   fx = K[0,0]
   fy = K[1,1]
-  xyz_p = np.array([
+  h_cam = np.array([
     (u - cx) / fx,
     (v - cy) / fy,
     1.0])
-  azimuth = np.arctan(xyz_p[0], xyz_p[2])
-  elevation = np.arctan(-xyz_p[1], np.sqrt(np.power(xyz_p[0], 2) + np.power(xyz_p[2], 2)))
-  rho = 0.1  
+
+  # Opencv camera pose
+  R = cv2.Rodrigues(pose.rvec)[0]
+  # Express the feature in world coordinate
+  h_world = np.linalg.multi_dot((ROS_R_CV, R, h_cam))
+  x_w = h_world[0]
+  y_w = h_world[1]
+  z_w = h_world[2]
+  # Retrieve ray from world origin
+  # to feature location
+  azimuth = np.arctan(y_w / x_w)
+  elevation = np.arctan(z_w / np.sqrt(x_w*x_w + y_w*y_w))
+  # Express camera center in world coordinate
+  t_w = np.dot(ROS_R_CV, pose.tvec)
   return np.array([
-    cam_xyz[0],
-    cam_xyz[1],
-    cam_xyz[2],
+    t_w[0],
+    t_w[1],
+    t_w[2],
     azimuth,
     elevation,
     rho])
 
+# Compute xyz point representation in world coordinate
+# given a point expressed in inverse depth representation
 def point_from_inverse_depth(inverse_depth_point):
-  xyz = inverse_depth_point[0:3]
-  rho = xyz[5]
+  # Camera center from which the feature
+  # was observed the first time
+  obs_initial_position = inverse_depth_point[0:3]
+  # Direction of the feature
   azimuth = inverse_depth_point[3]
   elevation = inverse_depth_point[4]
-  XYZ = xyz + (1/rho) * direction(elevation, azimuth)
-  return XYZ
-
-# Let's p be a point in camera frame
-# defined by p = [u, v, d]
-# where u and v represent the pixel
-# coordinate in the image and d the 
-# disparity value associated to that point
-
-# Jacobian of the reconstruction of a point
-# given u, v and the disparity
-def Jg(K, p):
-  u = p[0]
-  v = p[1]
-  d = p[2]
-  cx = K[0,2]
-  cy = K[1,2]
-  d_sqr = d * d
-  return np.array([
-#    [b / d, 0, b * (cx - u) / d_sqr],
-#    [0, b / d, b * (cy - v) / d_sqr],
-    [b / d, 0, 0],
-    [0, b / d, 0],
-    [0, 0, -fb/d_sqr]])
+  # Inverse depth
+  rho = inverse_depth_point[5]
+  # Retrieve feature point
+  return obs_initial_position + (1/rho) * direction(elevation, azimuth)
 
 # Jacobian of the function that
-# convert a point from the opencv
-# coordinate system to the ros
-# coordinate system
-def Jf():
-  return np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
+# for an inverse depth representation
+# retrieves the feature xyz coordinates
+def J_reconstruct(elevation, azimuth, rho):
+  ce = np.cos(elevation)
+  ca = np.cos(azimuth)
+  se = np.sin(elevation)
+  sa = np.sin(azimuth)
+  rho_sq = rho * rho
 
-# Jacobian of the overall function
-# using the chain rule
-def J(K, p):
-  return np.dot(Jf(), Jg(K, p))
+  J = np.zeros((3,6))
+  J[0:3, 0:3] = np.eye(3,3)
+  # dfx
+  J[0,3] = -sa * ce / rho
+  J[0,4] = -se * ca / rho
+  J[0,5] = -ce * ca / rho_sq
+  # dfy
+  J[1,3] = ca * ce / rho
+  J[1,4] = -se * sa / rho
+  J[1,5] = -ce * sa / rho_sq
+  # dfz
+  J[2,3] = 0
+  J[2,4] = ce / rho
+  J[2,5] = -se / rho_sq
+  return J
 
-# Backproject a point u, v
-def backproject(K, uv):
-  u = uv[0]
-  v = uv[1]
+# Jacobian of measurement equation
+# of a point in inverse depth wrt 
+# the position, orientation and a 
+# single feature parametrized in
+# inverse depth
+def J_inv_depth(pose, feature):
+  p = pose.tvec
+  R = cv2.Rodrigues(pose.rvec)[0]
+  xi = feature[0]
+  yi = feature[1]
+  zi = feature[2]
+  azimuth = feature[3]
+  elevation = feature[4]
+  rho = feature[5]
+  ti = np.array([xi, yi, zi])
+  di = direction(azimuth, elevation)
+
+  J = np.zeros((3, 6))
+  J[0:3, 0:3] = np.dot(rho, np.transpose(R))
+  J[0:3, 3:5] = np.dot(np.transpose(R), J_direction(azimuth, elevation))
+  J[0:3, 5] = np.dot(np.transpose(R), ti - p)
+  return J
+
+# Jacobian of the projection on image plane
+def Jp(K, P):
+  X = P[0]
+  Y = P[1]
+  Z = P[2]
   fx = K[0,0]
   fy = K[1,1]
-  cx = K[0,2]
-  cy = K[1,2]
-  return np.array([(u - cx) / fx, (v - cy) / fy, 1.0])
 
-# Reconstruct a from u, v, and disparity value a 3d point
-# in the camera frame
-def reconstruct(K, p):
-  disp = p[2]
-  z = fb / disp
-  xy = backproject(K, p[0:2])
-  # move to ros coordinate system
-  return np.array([z, -xy[0], -xy[1]])
-  
-# Return the disparity value
-# corresponding to the given depth
-def disparity(z):
-  return fb / z
+  return np.array([
+    [fx/Z, 0, -X*fx/Z*Z],
+    [0, fy/Z, -Y*fy/Z*Z]])
+
+
+def Jh(K, pose, feature):
+  hw = point_from_inverse_depth(feature)
+  W_R_C = cv2.Rodrigues(pose.rvec)[0]
+  C_R_W = np.transpose(W_R_C)
+  hc = np.dot(C_R_W, hw) - np.dot(C_R_W, pose.tvec)
+  hc_cv = np.dot(CV_R_ROS, hc)
+  return np.linalg.multi_dot((Jp(K, hc_cv), CV_R_ROS, J_inv_depth(pose, feature)))
+
+# Project a 3d point onto the image plane
+def project(P, pose, K):
+  R = cv2.Rodrigues(pose.rvec)[0]
+  P_cam = np.dot(R, P) + pose.tvec
+  P_camX = P_cam[0] / P_cam[2]
+  P_camY = P_cam[1] / P_cam[2]
+  P_pix = np.dot(K, np.array([P_camX, P_camY, 1.0]))
+  return P_pix[0:2]
+
+# Convert a pose to opencv coordinate
+def toOpencv(pose):
+  return  Pose(
+      rvec=np.array([-pose.rvec[1], -pose.rvec[2], pose.rvec[0]]),
+      tvec=np.array([-pose.tvec[1], -pose.tvec[2], pose.tvec[0]]))
 
 # Return points representing the uncertainty
 # in 3 dimensions
 def ellipsoid(center, cov, confidence=0.95):
   # find the rotation matrix and radii of the axes
   U, s, rotation = np.linalg.svd(cov)
-  print("Scales")
-  print(s)
-  print("Rotation")
-  print(rotation)
   
   chi_sqr_val = np.sqrt(chi2.ppf(confidence, cov.shape[0]))
   radii = np.sqrt(chi_sqr_val * s)
@@ -129,52 +189,55 @@ def ellipsoid(center, cov, confidence=0.95):
           [x[i,j],y[i,j],z[i,j]] = np.dot([x[i,j],y[i,j],z[i,j]], rotation) + center
   return x, y, z
 
-
-# Std of the 2d point on u, v, and disparity
-sig = np.array([1, 1, 0.5])
-# Variance of the 3d point
-var = np.diag(np.power(sig, 2))
-
-# Camera parameters
-K = np.array([[f, 0, 533.09], [0, f, 418.08], [0, 0, 1]])
-
-# uv, d point
-p3 = np.array([256.0, 192.0, disparity(3.0)])
-p10 = np.array([256.0, 192.0, disparity(10.0)])
-
-# Propagate uncertainty
-Jac = J(K, p3)
-var_3d_p3 = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
-Jac = J(K, p10)
-var_3d_p10 = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
-
-# Project the point onto the image plane
-xyz3 = reconstruct(K, p3)
-xyz10 = reconstruct(K, p10)
-print("Reconstructed")
-print(xyz3)
-print(xyz10)
-
-# Compute ellipsoid confidence
-x3, y3, z3 = ellipsoid(xyz3, var_3d_p3)
-x10, y10, z10 = ellipsoid(xyz10, var_3d_p10)
-
-
-# Plot
-fig = plt.figure()
-ax = fig.gca(projection='3d')
-# Unit vectors
-ax.plot([0, xyz3[0]], [0, xyz3[1]], zs=[0, xyz3[2]])
-ax.plot([0, xyz10[0]], [0, xyz10[1]], zs=[0, xyz10[2]])
-ax.plot_wireframe(x3, y3, z3,  rstride=4, cstride=4, color='b', alpha=0.2)
-ax.plot_wireframe(x10, y10, z10,  rstride=4, cstride=4, color='m', alpha=0.2)
-ax.scatter(xyz3[0], xyz3[1], xyz3[2])
-ax.scatter(xyz10[0], xyz10[1], xyz10[2])
-ax.set_xlabel('X axis')
-ax.set_ylabel('Y axis')
-ax.set_zlabel('Z axis')
-plt.show()
-
-
-
-
+if __name__ == "__main__":
+  # Camera intrinsics
+  K = np.array([[579.71, 0, 511.5], [0, 579.71, 383.5], [0, 0, 1]])
+  # Camera extrinsics
+  angle, axis = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.0, 0.0, 0.0))
+  rvec = angle * axis
+  tvec = np.array([0.5,0,0])
+  pose = Pose(rvec, tvec)
+  tvec_next = np.array([0.5, -0.2, 0.0])
+  angle_next, axis_next = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.0, 0.0, 0.0))
+  rvec_next = angle_next * axis_next
+  next_pose = Pose(rvec_next, tvec_next)
+  # Feature point in world coordinate
+  P = np.array([3, 0, 0])
+  uv = project(np.dot(CV_R_ROS, P), toOpencv(pose), K)
+  # Inverse depth representation of the point
+  feature = inverse_depth(toOpencv(pose), K, uv[0], uv[1], rho=1/np.linalg.norm(P))
+  # Point in world coordinate
+  P_w = point_from_inverse_depth(feature)
+  # Initial sigma on inverse depth representation
+  var = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.1]),2))
+  J = J_reconstruct(feature[3], feature[4], feature[5])
+  cov = np.linalg.multi_dot((J, var, np.transpose(J)))
+  print(cov)
+  # Implement one step kalman filter for measurement
+  # and see the effect on the covariance
+  H = Jh(K, next_pose, feature)
+  S = np.linalg.multi_dot((H, var, np.transpose(H))) # no measurement noise
+  Sinv = np.linalg.inv(S)
+  # Kalman gain
+  Kgain = np.linalg.multi_dot((var, np.transpose(H), Sinv))
+  new_var = np.dot(np.eye(6,6) - np.dot(Kgain, H), var)
+  new_cov = np.linalg.multi_dot((J, new_var, np.transpose(J)))
+  print(cov)
+  print(new_cov)
+  # Plot
+  fig = plt.figure()
+  ax = fig.gca(projection='3d')
+  ax.plot([0, P_w[0]], [0, P_w[1]], zs=[0, P_w[2]])
+  ax.plot([tvec_next[0], P_w[0]], [tvec_next[1], P_w[1]], zs=[tvec_next[2], P_w[2]])
+  ax.scatter(P_w[0], P_w[1], P_w[2])
+  x0, y0, z0 = ellipsoid(P_w[0:3], cov)
+  x1, y1, z1 = ellipsoid(P_w[0:3], new_cov)
+  ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, color='b', alpha=0.2)
+  ax.plot_wireframe(x1, y1, z1,  rstride=4, cstride=4, color='r', alpha=0.2)
+  ax.set_xlabel('X axis')
+  ax.set_ylabel('Y axis')
+  ax.set_zlabel('Z axis')
+  #ax.set_xlim(-0.5, 10)
+  #ax.set_ylim(-0.5, 10)
+  #ax.set_zlim(-0.5, 10)
+  plt.show()
