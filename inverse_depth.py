@@ -209,6 +209,7 @@ def update_next_pose(pose, tau):
   T = np.eye(4,4)
   T[0:3, 0:3] = R
   T[0:3, 3] = t
+  print(T)
   next_T = np.dot(T, se3.exp(tau))
   next_rvec = cv2.Rodrigues(next_T[0:3, 0:3])[0]
   next_tvec = next_T[0:3, 3]
@@ -219,15 +220,16 @@ if __name__ == "__main__":
   K = np.array([[579.71, 0, 511.5], [0, 579.71, 383.5], [0, 0, 1]])
   # Collection of poses
   rvec = np.array([0.0,0.0,0.0])
-  tvec = np.array([0.5,0,0])
+  tvec = np.array([0.0,0,0])
   pose = Pose(rvec, tvec)
   # Speed at which we evolves
-  tau = np.array([0.0, -0.1, 0.0, 0.0, 0.0, 0.8])
-  num_pose = 2
+  tau = np.array([0.0, -0.01, 0.0, 0.0, 0.0, 0.0])
+  num_pose = 6
+  dt = 1
   trajectory = []
   for i in range(num_pose):
     trajectory.append(pose)
-    pose = update_next_pose(pose, tau)
+    pose = update_next_pose(pose, np.dot(dt, tau))
   
   # Feature point in world coordinate
   P = np.array([3, 0, 0])
@@ -268,6 +270,10 @@ if __name__ == "__main__":
       covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
   # Plot
+  alpha_max = 0.8
+  alpha_min = 0.1
+  alpha_range = np.arange(alpha_min, alpha_max, (alpha_max - alpha_min) / len(trajectory))
+  print(alpha_range)
   fig = plt.figure()
   colors = [np.random.rand(3,) for i in range(len(trajectory))]
   ax = fig.gca(projection='3d')
@@ -284,7 +290,7 @@ if __name__ == "__main__":
     # Plot xyz uncertainty
     #x0, y0, z0 = ellipsoid(P_w[0:3], feature_history[-1].cov_xyz)
     x0, y0, z0 = ellipsoid(P_w[0:3], feature_history[i].cov_xyz)
-    ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, alpha=0.2, color=colors[i])
+    ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, alpha=alpha_range[i], color=colors[i])
   ax.set_xlabel('X axis')
   ax.set_ylabel('Y axis')
   ax.set_zlabel('Z axis')
