@@ -3,7 +3,7 @@
 import cv2
 import numpy as np
 import collections
-import so3
+import se3
 from scipy.stats import chi2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -202,25 +202,41 @@ def plot_frame(R, t, ax, s=0.02):
   ax.plot([tx, axis[0]], [ty, axis[1]], [tz, axis[2]], color='g')
   axis = np.dot(s, R_basis[0:3, 2]) + t
   ax.plot([tx, axis[0]], [ty, axis[1]], [tz, axis[2]], color='b')
- 
+
+def update_next_pose(pose, tau):
+  R = cv2.Rodrigues(pose.rvec)[0]
+  t = pose.tvec
+  T = np.eye(4,4)
+  T[0:3, 0:3] = R
+  T[0:3, 3] = t
+  next_T = np.dot(T, se3.exp(tau))
+  next_rvec = cv2.Rodrigues(next_T[0:3, 0:3])[0]
+  next_tvec = next_T[0:3, 3]
+  return Pose(rvec=next_rvec, tvec=next_tvec)
+
 if __name__ == "__main__":
   # Camera intrinsics
   K = np.array([[579.71, 0, 511.5], [0, 579.71, 383.5], [0, 0, 1]])
   # Collection of poses
-  angle, axis = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.0, 0.0, 0.0))
-  rvec = angle * axis
+  rvec = np.array([0.0,0.0,0.0])
   tvec = np.array([0.5,0,0])
   pose = Pose(rvec, tvec)
-  tvec_next = np.array([0.5, -0.2, 0.0])
-  angle_next, axis_next = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.2, 0.0, 0.0))
-  rvec_next = angle_next * axis_next
-  next_pose = Pose(rvec_next, tvec_next)
-  trajectory = [pose, next_pose]
-  print(cv2.Rodrigues(rvec_next)[0])
+  # Speed at which we evolves
+  tau = np.array([0.0, -0.1, 0.0, 0.0, 0.0, 0.8])
+  num_pose = 2
+  trajectory = []
+  for i in range(num_pose):
+    trajectory.append(pose)
+    pose = update_next_pose(pose, tau)
+  
   # Feature point in world coordinate
   P = np.array([3, 0, 0])
   feature_history = []
   initialized = False
+  # Measurement noise
+  sig_u = 0.2
+  sig_v = 0.2
+  R = np.diag(np.power(np.array([sig_u, sig_v]), 2))
   for pose in trajectory:
     # If the feature is not initialized
     # create an inverse depth representation
@@ -233,8 +249,10 @@ if __name__ == "__main__":
       P_w = point_from_inverse_depth(feature_vector)
       # Initial sigma on inverse depth representation
       covariance_inv_depth = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.1]),2))
+      # Propagate the inverse depth on the xyz depth
       J = J_reconstruct(feature_vector[3], feature_vector[4], feature_vector[5])
       covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
+      # Save both covariances
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
       initialized = True
     else:
@@ -242,7 +260,7 @@ if __name__ == "__main__":
       # and see the effect on the covariance
       f = feature_history[-1]
       H = Jh(K, pose, f.feature)
-      S = np.linalg.multi_dot((H, f.cov_inv_depth, np.transpose(H))) # no measurement noise
+      S = np.linalg.multi_dot((H, f.cov_inv_depth, np.transpose(H))) + R
       Sinv = np.linalg.inv(S)
       # Kalman gain
       Kgain = np.linalg.multi_dot((f.cov_inv_depth, np.transpose(H), Sinv))
@@ -251,7 +269,10 @@ if __name__ == "__main__":
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
   # Plot
   fig = plt.figure()
+  colors = [np.random.rand(3,) for i in range(len(trajectory))]
   ax = fig.gca(projection='3d')
+  # Point to represent the feature
+  # ax.scatter(P_w[0], P_w[1], P_w[2])
   for i in range(len(trajectory)):
     rvec = trajectory[i].rvec
     tvec = trajectory[i].tvec
@@ -259,16 +280,15 @@ if __name__ == "__main__":
     # Plot frame
     plot_frame(cv2.Rodrigues(rvec)[0], tvec, ax)
     # Plot direction of the feature
-    ax.plot([tvec[0], P_w[0]], [tvec[1], P_w[1]], zs=[tvec[2], P_w[2]])
-    # Point to represent the feature
-    ax.scatter(P_w[0], P_w[1], P_w[2])
+    ax.plot([tvec[0], P_w[0]], [tvec[1], P_w[1]], zs=[tvec[2], P_w[2]], color=colors[i])
     # Plot xyz uncertainty
-    x0, y0, z0 = ellipsoid(P_w[0:3], cov_xyz)
-    ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, alpha=0.2)
+    #x0, y0, z0 = ellipsoid(P_w[0:3], feature_history[-1].cov_xyz)
+    x0, y0, z0 = ellipsoid(P_w[0:3], feature_history[i].cov_xyz)
+    ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, alpha=0.2, color=colors[i])
   ax.set_xlabel('X axis')
   ax.set_ylabel('Y axis')
   ax.set_zlabel('Z axis')
-  #ax.set_xlim(-0.5, 5)
-  #ax.set_ylim(-0.5, 5)
-  #ax.set_zlim(-0.5, 5)
+  #ax.set_xlim(-0.5, 4)
+  #ax.set_ylim(-0.5, 4)
+  #ax.set_zlim(-0.5, 4)
   plt.show()
