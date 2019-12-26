@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 Pose = collections.namedtuple('Pose', ['rvec', 'tvec'])
+Feature = collections.namedtuple('Feature', ['feature', 'cov_inv_depth', 'cov_xyz'])
 
 # Pass a point from OpenCV
 # to ROS coordinate system
@@ -189,55 +190,85 @@ def ellipsoid(center, cov, confidence=0.95):
           [x[i,j],y[i,j],z[i,j]] = np.dot([x[i,j],y[i,j],z[i,j]], rotation) + center
   return x, y, z
 
+def plot_frame(R, t, ax, s=0.02):
+  basis = np.eye(3,3)
+  R_basis = np.dot(R, basis)
+  tx = t[0]
+  ty = t[1]
+  tz = t[2]
+  axis = np.dot(s, R_basis[0:3, 0]) + t
+  ax.plot([tx, axis[0]], [ty, axis[1]], [tz, axis[2]], color='r')
+  axis = np.dot(s, R_basis[0:3, 1]) + t
+  ax.plot([tx, axis[0]], [ty, axis[1]], [tz, axis[2]], color='g')
+  axis = np.dot(s, R_basis[0:3, 2]) + t
+  ax.plot([tx, axis[0]], [ty, axis[1]], [tz, axis[2]], color='b')
+ 
 if __name__ == "__main__":
   # Camera intrinsics
   K = np.array([[579.71, 0, 511.5], [0, 579.71, 383.5], [0, 0, 1]])
-  # Camera extrinsics
+  # Collection of poses
   angle, axis = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.0, 0.0, 0.0))
   rvec = angle * axis
   tvec = np.array([0.5,0,0])
   pose = Pose(rvec, tvec)
   tvec_next = np.array([0.5, -0.2, 0.0])
-  angle_next, axis_next = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.0, 0.0, 0.0))
+  angle_next, axis_next = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.2, 0.0, 0.0))
   rvec_next = angle_next * axis_next
   next_pose = Pose(rvec_next, tvec_next)
+  trajectory = [pose, next_pose]
+  print(cv2.Rodrigues(rvec_next)[0])
   # Feature point in world coordinate
   P = np.array([3, 0, 0])
-  uv = project(np.dot(CV_R_ROS, P), toOpencv(pose), K)
-  # Inverse depth representation of the point
-  feature = inverse_depth(toOpencv(pose), K, uv[0], uv[1], rho=1/np.linalg.norm(P))
-  # Point in world coordinate
-  P_w = point_from_inverse_depth(feature)
-  # Initial sigma on inverse depth representation
-  var = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.1]),2))
-  J = J_reconstruct(feature[3], feature[4], feature[5])
-  cov = np.linalg.multi_dot((J, var, np.transpose(J)))
-  print(cov)
-  # Implement one step kalman filter for measurement
-  # and see the effect on the covariance
-  H = Jh(K, next_pose, feature)
-  S = np.linalg.multi_dot((H, var, np.transpose(H))) # no measurement noise
-  Sinv = np.linalg.inv(S)
-  # Kalman gain
-  Kgain = np.linalg.multi_dot((var, np.transpose(H), Sinv))
-  new_var = np.dot(np.eye(6,6) - np.dot(Kgain, H), var)
-  new_cov = np.linalg.multi_dot((J, new_var, np.transpose(J)))
-  print(cov)
-  print(new_cov)
+  feature_history = []
+  initialized = False
+  for pose in trajectory:
+    # If the feature is not initialized
+    # create an inverse depth representation
+    # of it
+    if not initialized:
+      uv = project(np.dot(CV_R_ROS, P), toOpencv(pose), K)
+      # Inverse depth representation of the point
+      feature_vector = inverse_depth(toOpencv(pose), K, uv[0], uv[1], rho=1/np.linalg.norm(P))
+      # (Facultative) Point in world coordinate for comparison only
+      P_w = point_from_inverse_depth(feature_vector)
+      # Initial sigma on inverse depth representation
+      covariance_inv_depth = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.1]),2))
+      J = J_reconstruct(feature_vector[3], feature_vector[4], feature_vector[5])
+      covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
+      feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
+      initialized = True
+    else:
+      # Implement one step kalman filter for measurement
+      # and see the effect on the covariance
+      f = feature_history[-1]
+      H = Jh(K, pose, f.feature)
+      S = np.linalg.multi_dot((H, f.cov_inv_depth, np.transpose(H))) # no measurement noise
+      Sinv = np.linalg.inv(S)
+      # Kalman gain
+      Kgain = np.linalg.multi_dot((f.cov_inv_depth, np.transpose(H), Sinv))
+      covariance_inv_depth = np.dot(np.eye(6,6) - np.dot(Kgain, H), f.cov_inv_depth)
+      covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
+      feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
   # Plot
   fig = plt.figure()
   ax = fig.gca(projection='3d')
-  ax.plot([0, P_w[0]], [0, P_w[1]], zs=[0, P_w[2]])
-  ax.plot([tvec_next[0], P_w[0]], [tvec_next[1], P_w[1]], zs=[tvec_next[2], P_w[2]])
-  ax.scatter(P_w[0], P_w[1], P_w[2])
-  x0, y0, z0 = ellipsoid(P_w[0:3], cov)
-  x1, y1, z1 = ellipsoid(P_w[0:3], new_cov)
-  ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, color='b', alpha=0.2)
-  ax.plot_wireframe(x1, y1, z1,  rstride=4, cstride=4, color='r', alpha=0.2)
+  for i in range(len(trajectory)):
+    rvec = trajectory[i].rvec
+    tvec = trajectory[i].tvec
+    cov_xyz = feature_history[i].cov_xyz
+    # Plot frame
+    plot_frame(cv2.Rodrigues(rvec)[0], tvec, ax)
+    # Plot direction of the feature
+    ax.plot([tvec[0], P_w[0]], [tvec[1], P_w[1]], zs=[tvec[2], P_w[2]])
+    # Point to represent the feature
+    ax.scatter(P_w[0], P_w[1], P_w[2])
+    # Plot xyz uncertainty
+    x0, y0, z0 = ellipsoid(P_w[0:3], cov_xyz)
+    ax.plot_wireframe(x0, y0, z0,  rstride=4, cstride=4, alpha=0.2)
   ax.set_xlabel('X axis')
   ax.set_ylabel('Y axis')
   ax.set_zlabel('Z axis')
-  #ax.set_xlim(-0.5, 10)
-  #ax.set_ylim(-0.5, 10)
-  #ax.set_zlim(-0.5, 10)
+  #ax.set_xlim(-0.5, 5)
+  #ax.set_ylim(-0.5, 5)
+  #ax.set_zlim(-0.5, 5)
   plt.show()
