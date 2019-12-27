@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import collections
 import se3
+import so3
 from scipy.stats import chi2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -75,7 +76,7 @@ def inverse_depth(pose, K, u, v, rho=0.1):
 
 # Compute xyz point representation in world coordinate
 # given a point expressed in inverse depth representation
-def point_from_inverse_depth(inverse_depth_point):
+def point_from_inverse_depth(inverse_depth_point, r):
   # Camera center from which the feature
   # was observed the first time
   obs_initial_position = inverse_depth_point[0:3]
@@ -86,11 +87,18 @@ def point_from_inverse_depth(inverse_depth_point):
   rho = inverse_depth_point[5]
   # Retrieve feature point
   return obs_initial_position + (1/rho) * direction(elevation, azimuth)
+  #return rho * (obs_initial_position - r) + direction(elevation, azimuth)
 
 # Jacobian of the function that
 # for an inverse depth representation
 # retrieves the feature xyz coordinates
-def J_reconstruct(elevation, azimuth, rho):
+def J_reconstruct(feature, pose):
+  xi = feature[0]
+  yi = feature[1]
+  zi = feature[2]
+  azimuth = feature[3]
+  elevation = feature[4]
+  rho = feature[5]
   ce = np.cos(elevation)
   ca = np.cos(azimuth)
   se = np.sin(elevation)
@@ -99,6 +107,7 @@ def J_reconstruct(elevation, azimuth, rho):
 
   J = np.zeros((3,6))
   J[0:3, 0:3] = np.eye(3,3)
+  #J[0:3, 0:3] = np.dot(rho, np.eye(3,3))
   # dfx
   J[0,3] = -sa * ce / rho
   J[0,4] = -se * ca / rho
@@ -111,6 +120,9 @@ def J_reconstruct(elevation, azimuth, rho):
   J[2,3] = 0
   J[2,4] = ce / rho
   J[2,5] = -se / rho_sq
+
+  #J[0:3, 3:5] = J_direction(azimuth, elevation)
+  #J[0:3, 5] = np.array([xi, yi, zi]) - pose.tvec
   return J
 
 # Jacobian of measurement equation
@@ -150,7 +162,7 @@ def Jp(K, P):
 
 
 def Jh(K, pose, feature):
-  hw = point_from_inverse_depth(feature)
+  hw = point_from_inverse_depth(feature, pose.tvec)
   W_R_C = cv2.Rodrigues(pose.rvec)[0]
   C_R_W = np.transpose(W_R_C)
   hc = np.dot(C_R_W, hw) - np.dot(C_R_W, pose.tvec)
@@ -203,18 +215,17 @@ def plot_frame(R, t, ax, s=0.02):
   axis = np.dot(s, R_basis[0:3, 2]) + t
   ax.plot([tx, axis[0]], [ty, axis[1]], [tz, axis[2]], color='b')
 
-def update_next_pose(pose, tau):
-  R = cv2.Rodrigues(pose.rvec)[0]
-  t = pose.tvec
-  T = np.eye(4,4)
-  T[0:3, 0:3] = R
-  T[0:3, 3] = t
-  print(T)
-  next_T = np.dot(T, se3.exp(tau))
-  next_rvec = cv2.Rodrigues(next_T[0:3, 0:3])[0]
-  next_tvec = next_T[0:3, 3]
-  return Pose(rvec=next_rvec, tvec=next_tvec)
+def update_next_pose(yaw, P):
+  Rp = so3.eulerZYX_to_rot_matx(np.pi, 0.0, 0.0)
+  Rz = so3.eulerZYX_to_rot_matx(yaw, 0.0, 0.0)
+  R = np.linalg.multi_dot((np.transpose(Rp), Rz, Rp, np.eye(3,3)))
 
+  toOrigin = np.dot(Rp, P)
+  x_axis = np.array([1.0, 0.0, 0.0])
+  toPose = np.linalg.norm(P) * np.linalg.multi_dot((Rz, Rp, x_axis))
+  t = toPose - toOrigin
+  return Pose(rvec=cv2.Rodrigues(R)[0], tvec=t)
+  
 if __name__ == "__main__":
   # Camera intrinsics
   K = np.array([[579.71, 0, 511.5], [0, 579.71, 383.5], [0, 0, 1]])
@@ -222,22 +233,24 @@ if __name__ == "__main__":
   rvec = np.array([0.0,0.0,0.0])
   tvec = np.array([0.0,0,0])
   pose = Pose(rvec, tvec)
-  # Speed at which we evolves
-  tau = np.array([0.0, -0.01, 0.0, 0.0, 0.0, 0.0])
-  num_pose = 6
-  dt = 1
-  trajectory = []
-  for i in range(num_pose):
-    trajectory.append(pose)
-    pose = update_next_pose(pose, np.dot(dt, tau))
-  
   # Feature point in world coordinate
   P = np.array([3, 0, 0])
   feature_history = []
   initialized = False
+  # Speed at which we evolves
+  num_pose = 7
+  max_yaw = np.pi/2
+  yaw_step = max_yaw / num_pose
+  yaw = 0
+  trajectory = []
+  for i in range(num_pose):
+    trajectory.append(pose)
+    yaw = yaw + yaw_step
+    pose = update_next_pose(yaw, P)
+  
   # Measurement noise
-  sig_u = 0.2
-  sig_v = 0.2
+  sig_u = 0.4
+  sig_v = 0.4
   R = np.diag(np.power(np.array([sig_u, sig_v]), 2))
   for pose in trajectory:
     # If the feature is not initialized
@@ -248,12 +261,16 @@ if __name__ == "__main__":
       # Inverse depth representation of the point
       feature_vector = inverse_depth(toOpencv(pose), K, uv[0], uv[1], rho=1/np.linalg.norm(P))
       # (Facultative) Point in world coordinate for comparison only
-      P_w = point_from_inverse_depth(feature_vector)
+      P_w = point_from_inverse_depth(feature_vector, pose.tvec)
       # Initial sigma on inverse depth representation
       covariance_inv_depth = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.1]),2))
       # Propagate the inverse depth on the xyz depth
-      J = J_reconstruct(feature_vector[3], feature_vector[4], feature_vector[5])
+      J = J_reconstruct(feature_vector, pose)
       covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
+      #covariance_xyz[0:3, 2] = 0
+      #covariance_xyz[2, 0:3] = 0
+      #covariance_xyz[2,2] = np.power(np.sqrt(covariance_inv_depth[5,5]) / (feature_vector[5] * feature_vector[5]), 2)
+      #print(covariance_xyz)
       # Save both covariances
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
       initialized = True
@@ -267,11 +284,15 @@ if __name__ == "__main__":
       # Kalman gain
       Kgain = np.linalg.multi_dot((f.cov_inv_depth, np.transpose(H), Sinv))
       covariance_inv_depth = np.dot(np.eye(6,6) - np.dot(Kgain, H), f.cov_inv_depth)
+      J = J_reconstruct(f.feature, pose)
       covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
+      #covariance_xyz[0:3, 2] = 0
+      #covariance_xyz[2, 0:3] = 0
+      #covariance_xyz[2,2] = np.power(np.sqrt(covariance_inv_depth[5,5]) / (f.feature[5] * f.feature[5]), 2)
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
   # Plot
   alpha_max = 0.8
-  alpha_min = 0.1
+  alpha_min = 0.05
   alpha_range = np.arange(alpha_min, alpha_max, (alpha_max - alpha_min) / len(trajectory))
   print(alpha_range)
   fig = plt.figure()
