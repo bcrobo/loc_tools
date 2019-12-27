@@ -238,8 +238,8 @@ if __name__ == "__main__":
   feature_history = []
   initialized = False
   # Speed at which we evolves
-  num_pose = 7
-  max_yaw = np.pi/2
+  num_pose = 3
+  max_yaw = np.pi
   yaw_step = max_yaw / num_pose
   yaw = 0
   trajectory = []
@@ -263,14 +263,10 @@ if __name__ == "__main__":
       # (Facultative) Point in world coordinate for comparison only
       P_w = point_from_inverse_depth(feature_vector, pose.tvec)
       # Initial sigma on inverse depth representation
-      covariance_inv_depth = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.1]),2))
+      covariance_inv_depth = np.diag(np.power(np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.5]),2))
       # Propagate the inverse depth on the xyz depth
       J = J_reconstruct(feature_vector, pose)
       covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
-      #covariance_xyz[0:3, 2] = 0
-      #covariance_xyz[2, 0:3] = 0
-      #covariance_xyz[2,2] = np.power(np.sqrt(covariance_inv_depth[5,5]) / (feature_vector[5] * feature_vector[5]), 2)
-      #print(covariance_xyz)
       # Save both covariances
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
       initialized = True
@@ -286,18 +282,15 @@ if __name__ == "__main__":
       covariance_inv_depth = np.dot(np.eye(6,6) - np.dot(Kgain, H), f.cov_inv_depth)
       J = J_reconstruct(f.feature, pose)
       covariance_xyz = np.linalg.multi_dot((J, covariance_inv_depth, np.transpose(J)))
-      #covariance_xyz[0:3, 2] = 0
-      #covariance_xyz[2, 0:3] = 0
-      #covariance_xyz[2,2] = np.power(np.sqrt(covariance_inv_depth[5,5]) / (f.feature[5] * f.feature[5]), 2)
       feature_history.append(Feature(feature=feature_vector, cov_inv_depth=covariance_inv_depth, cov_xyz=covariance_xyz))
   # Plot
   alpha_max = 0.8
   alpha_min = 0.05
   alpha_range = np.arange(alpha_min, alpha_max, (alpha_max - alpha_min) / len(trajectory))
-  print(alpha_range)
   fig = plt.figure()
   colors = [np.random.rand(3,) for i in range(len(trajectory))]
   ax = fig.gca(projection='3d')
+#  ax.set_aspect(aspect=1)
   # Point to represent the feature
   # ax.scatter(P_w[0], P_w[1], P_w[2])
   for i in range(len(trajectory)):
@@ -315,7 +308,7 @@ if __name__ == "__main__":
   ax.set_xlabel('X axis')
   ax.set_ylabel('Y axis')
   ax.set_zlabel('Z axis')
-  #ax.set_xlim(-0.5, 4)
-  #ax.set_ylim(-0.5, 4)
-  #ax.set_zlim(-0.5, 4)
+  ax.set_xlim(-0.5, 4)
+  ax.set_ylim(-0.5, 4)
+  ax.set_zlim(-0.5, 0.5)
   plt.show()
