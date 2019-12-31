@@ -32,6 +32,9 @@ ROS_R_CV = np.array([
     [0,-1,0]])
 CV_R_ROS = np.transpose(ROS_R_CV)
 
+def toOpencv(v):
+  return np.array([-v[1], -v[2], v[0]])
+
 # Compute the confidence ellipse
 def confidence_ellipse(pose, cov, confidence=0.95):
   # Compute eigenvalues and eigenvectors
@@ -78,14 +81,15 @@ def Jg(pose):
 def J(K, pose, P):
   R = cv2.Rodrigues(pose.rvec)[0]
   P_cam = np.dot(R, P) + pose.tvec
-  return np.linalg.multi_dot((Jf(K, P_cam), CV_R_ROS, Jg(pose)))
+  return np.linalg.multi_dot((Jf(K, toOpencv(P_cam)), CV_R_ROS, Jg(pose)))
 
 # Project a 3d point onto the image plane
 def project(P, pose, K, res_y):
   R = cv2.Rodrigues(pose.rvec)[0]
   P_cam = np.dot(R, P) + pose.tvec
-  P_camX = P_cam[0] / P_cam[2]
-  P_camY = P_cam[1] / P_cam[2]
+  P_cam_cv=toOpencv(P_cam)
+  P_camX = P_cam_cv[0] / P_cam_cv[2]
+  P_camY = P_cam_cv[1] / P_cam_cv[2]
   P_pix = np.dot(K, np.array([P_camX, P_camY, 1.0]))
   P_pix[1] = res_y - P_pix[1]
   return P_pix[0:2]
@@ -104,10 +108,10 @@ res_y = 768
 K = np.array([[579.71, 0, 511.5], [0, 579.71, 383.5], [0, 0, 1]])
 
 # 3d point
-P = np.array([0, 0, 2])
+P = np.array([3, 0, 1])
 
 # Pose
-angle, axis = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0.1, 0.1, 0.1))
+angle, axis = so3.log_map_rot_matx(so3.eulerZYX_to_rot_matx(0,0,0))
 rvec = angle * axis
 tvec = np.array([0,0,0])
 pose = Pose(rvec, tvec)
