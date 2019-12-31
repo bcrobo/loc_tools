@@ -26,6 +26,12 @@ import matplotlib.pyplot as plt
 # of the 3d point using
 # J_2d = J * Var_3d * J^T
 
+ROS_R_CV = np.array([
+    [0,0,1],
+    [-1,0,0],
+    [0,-1,0]])
+CV_R_ROS = np.transpose(ROS_R_CV)
+
 # Compute the confidence ellipse
 def confidence_ellipse(pose, cov, confidence=0.95):
   # Compute eigenvalues and eigenvectors
@@ -72,7 +78,7 @@ def Jg(pose):
 def J(K, pose, P):
   R = cv2.Rodrigues(pose.rvec)[0]
   P_cam = np.dot(R, P) + pose.tvec
-  return np.dot(Jf(K, P_cam), Jg(pose))
+  return np.linalg.multi_dot((Jf(K, P_cam), CV_R_ROS, Jg(pose)))
 
 # Project a 3d point onto the image plane
 def project(P, pose, K, res_y):
@@ -88,7 +94,7 @@ def project(P, pose, K, res_y):
 Pose = collections.namedtuple('Pose', ['rvec', 'tvec'])
 
 # Std of the 3d point
-sig = np.array([0.1, 0.05, 0.0])
+sig = np.array([0.0, 0.1, 0.2])
 # Variance of the 3d point
 var = np.diag(np.power(sig, 2))
 
@@ -121,7 +127,7 @@ plt.xlim(0, res_x)
 plt.ylim(0, res_y)
 plt.xlabel("u (pix)")
 plt.ylabel("v (pix)")
-plt.scatter(uv[0], uv[1])
+plt.scatter(uv[0], uv[1], marker='+')
 plt.plot(xe95, ye95)
 plt.plot(xe99, ye99)
 plt.grid()
