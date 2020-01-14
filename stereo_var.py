@@ -3,7 +3,6 @@
 import cv2
 import numpy as np
 import collections
-import so3
 from scipy.stats import chi2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -30,10 +29,10 @@ def Jg(K, p):
   cy = K[1,2]
   d_sqr = d * d
   return np.array([
-#    [b / d, 0, b * (cx - u) / d_sqr],
-#    [0, b / d, b * (cy - v) / d_sqr],
-    [b / d, 0, 0],
-    [0, b / d, 0],
+    [b * (d - u  + cx) / d_sqr, 0, b * (cx - u) / d_sqr],
+    [0, b * (d - v  + cy) / d_sqr, b * (cy - v) / d_sqr],
+#    [b / d, 0, 0],
+#    [0, b / d, 0],
     [0, 0, -fb/d_sqr]])
 
 # Jacobian of the function that
@@ -65,7 +64,7 @@ def reconstruct(K, p):
   z = fb / disp
   xy = backproject(K, p[0:2])
   # move to ros coordinate system
-  return np.array([z, -xy[0], -xy[1]])
+  return np.array([z, -z*xy[0], -z*xy[1]])
   
 # Return the disparity value
 # corresponding to the given depth
@@ -101,34 +100,48 @@ var = np.diag(np.power(sig, 2))
 # Camera parameters
 K = np.array([[f, 0, 533.09], [0, f, 418.08], [0, 0, 1]])
 
-# Pixel
-u = 256.0
-v = 192.0
+# Plot options
+min_depth = 10.
+max_depth = 11.
+depth_step = 5.
+
+res_width_min = 0.
+res_width_max = 1024.
+res_height_min = 0.
+res_height_max = 768.
+res_step = 200.
 
 # Plot
 fig = plt.figure()
-ax = fig.gca(projection='3d')
-for z in np.arange(2, 50, 5):
-  # uv, d point
-  p = np.array([u, v, disparity(z)])
+ax = Axes3D(fig)
+for depth in np.arange(min_depth, max_depth, depth_step):
+  for u in np.arange(res_width_min, res_width_max, res_step):
+    for v in np.arange(res_height_min, res_height_max, res_step):
+      # uv, d point
+      p = np.array([u, v, disparity(depth)])
 
-  # Propagate uncertainty
-  Jac = J(K, p)
-  var_3d = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
+      # Propagate uncertainty
+      Jac = J(K, p)
+      var_3d = np.linalg.multi_dot((Jac, var, np.transpose(Jac)))
 
-  # Project the point onto the image plane
-  xyz = reconstruct(K, p)
+      # Project the point onto the image plane
+      xyz = reconstruct(K, p)
+      print(xyz)
 
-  # Compute ellipsoid confidence
-  x, y, z = ellipsoid(xyz, var_3d)
+      # Compute ellipsoid confidence
+      x, y, z = ellipsoid(xyz, var_3d)
 
-  # Unit vectors
-  ax.plot([0, xyz[0]], [0, xyz[1]], zs=[0, xyz[2]])
-  ax.plot_wireframe(x, y, z,  rstride=4, cstride=4, color='b', alpha=0.2)
-  ax.scatter(xyz[0], xyz[1], xyz[2])
-ax.set_xlabel('X axis')
-ax.set_ylabel('Y axis')
-ax.set_zlabel('Z axis')
+      # Unit vectors
+      ax.plot([0, xyz[0]], [0, xyz[1]], zs=[0, xyz[2]])
+      ax.plot_wireframe(x, y, z,  rstride=4, cstride=4, color='b', alpha=0.2)
+      ax.scatter(xyz[0], xyz[1], xyz[2])
+ax.set_xlabel('X axis (m)')
+ax.set_ylabel('Y axis (m)')
+ax.set_zlabel('Z axis (m)')
+ax.set_xlim3d(-5,50)
+ax.set_ylim3d(-5,50)
+ax.set_zlim3d(-5,50)
+plt.title('Stereovision measurement uncertainty')
 plt.show()
 
 
